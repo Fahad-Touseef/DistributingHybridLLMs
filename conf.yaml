@@ -1,0 +1,27 @@
+model:
+    n_embd: 512  
+    n_layer: 12  
+    n_dims: 64   
+    interleave: True
+    mixed_attn: "mambaformer"  # "standard" or "mambaformer"
+    n_positions: 512  # 1024 
+
+dataloader:
+    tokenizer_name: "gpt2"
+    dataset_name: "wikitext"
+    dataset_config: "wikitext-103-v1"
+    seq_len: 512  # 1024
+    batch_size: 4
+
+training:
+    learning_rate: 0.0001
+    # save_every_steps: 10000     (Not being used right now i.e. rn only final model is saved)
+    train_steps: 500001
+    epochs: 10  
+    out_dir: "./models"
+
+wandb:
+    project: "mambaformer_training"
+    entity: "fahad15-university-of-wisconsin-madison"
+    notes: "Distributing training of mambaformer"
+    log_every_steps: 10000
