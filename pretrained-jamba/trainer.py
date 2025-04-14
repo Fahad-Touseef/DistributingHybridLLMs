@@ -1,16 +1,21 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer, JambaForSequenceClassification, JambaConfig
 from torch.utils.data import DataLoader
 from transformers import DataCollatorWithPadding
+from torch.utils.tensorboard import SummaryWriter
+from torch.profiler import profile, record_function, ProfilerActivity
 from datasets import load_dataset
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import sys
 import time
+import argparse
 
-def main():
+def main(args):
 
     # Load the IMDB dataset from Hugging Face
+    
+    torch.manual_seed(args.seed)
     imdb = load_dataset("imdb")
     # Initialize the tokenizer
     tokenizer = AutoTokenizer.from_pretrained("ai21labs/Jamba-v0.1")
@@ -26,14 +31,13 @@ def main():
     train_dataloader = DataLoader(
         tokenized_imdb["train"],
         shuffle=True,
-        batch_size=8,
+        batch_size=16,
         collate_fn=data_collator
     )
 
     jamba_config = {
         "vocab_size": len(tokenizer.vocab),
-        "hidden_size": 256,
-        "intermediate_size": 14336,
+        "hidden_size": 128,
         "num_hidden_layers": 2,
         "num_attention_heads": 4,
         "num_key_value_heads": 4,
@@ -73,28 +77,30 @@ def main():
     jambaconfig = JambaConfig(**jamba_config)
     model  = JambaForSequenceClassification(jambaconfig)
 
-    prof = torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-            #schedule=torch.profiler.schedule(wait=1, warmup=1, active=1),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler('./logs/jamba'),
-            #record_shapes=True,
-            #profile_memory=True,
-            #with_stack=True,
-            #with_flops=True,
-            #with_modules=True
-            )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    #summary writer
+    # TensorBoard writer setup
+    writer = SummaryWriter(log_dir='./logs/jamba')
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     # Loss function and optimizer
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     # Training loop
     epochs = 5
-    prof.start()
+    activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA]
     for epoch in range(epochs):
+        prof = torch.profiler.profile(
+            activities=activities,
+            schedule=torch.profiler.schedule(wait=5, warmup=5, active=1),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./logs/jamba/profiler/epoch_{epoch+1}'),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True
+        )
+        prof.start()
         model.train() 
         total_loss = 0
-        for batch in train_dataloader:
+        for step, batch in enumerate(train_dataloader):
             start_time = time.time()
             optimizer.zero_grad()  # Zero the gradients
             inputs = batch['input_ids'].to(device)
@@ -102,21 +108,32 @@ def main():
             targets = batch['labels'].to(device)
             #print("Data_size", get_tensor_size_in_mb(inputs)+ get_tensor_size_in_mb(attention_mask) + get_tensor_size_in_mb(targets))
             # Forward pass
-            outputs = model(input_ids = inputs, attention_mask=attention_mask,labels = targets) 
+            with profile(activities=activities, profile_memory=True) as p:
+                outputs = model(input_ids = inputs, attention_mask=attention_mask,labels = targets) 
+            p.export_chrome_trace(f"epoch_{epoch+1}_step_{step} trace.json")
             loss = outputs.loss
             # Backward pass and optimize
             loss.backward()
             optimizer.step()
             end_time = time.time()
             total_loss += loss
-            print("Time taken for batch: ", end_time - start_time)
-        prof.step()
-        print(f"Epoch {epoch+1}, Loss: {total_loss / len(train_dataloader.dataset)}")
-    prof.stop()
+            # Optional: log batch loss too
+            writer.add_scalar('Loss/train_batch', loss, epoch * len(train_dataloader) + step)
+            print(f"Time taken for batch: {end_time - start_time:.2f}", )
+            prof.step()
+        avg_loss = total_loss / len(train_dataloader)
+        print(f"Epoch {epoch+1}, Loss: {avg_loss}")
+        writer.add_scalar('Loss/train_epoch', avg_loss, epoch)
+        prof.stop()
+    writer.close()
     print("Training complete!")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
+
+    parser.add_argument('--seed', type=int, default=42, metavar='S')
+    args = parser.parse_args()
+    main(args)
 
 
     
