@@ -24,8 +24,6 @@ def get_gpu_info(current_gpu):
     return free_mem/ 1024**2
 
 
-
-
 # DataLoader
 def collate_fn(batch):
     input_ids = torch.stack([item["input_ids"] for item in batch])
@@ -66,17 +64,18 @@ def main():
 
     # Initialize the Jamba model with tokenizer's vocab size
     model = Jamba(
-    dim=512,
+    dim=128,
     depth=2,
     num_tokens=tokenizer.vocab_size,
     d_state=128,
-    d_conv=128,
+    d_conv=32,
     heads=1,
     num_experts=1,
     num_experts_per_token=2,
     )
 
     model.to(device)  # Move model to GPU if available
+   
     # Move model to GPU if available
     activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA]
     def estimate_model_size_in_gb(model):
@@ -108,13 +107,12 @@ def main():
             
             print("GPU Status:", get_gpu_info(current_gpu))
            
-            print_gpu_memory(device,"Before training step")
             try:
                 # Forward pass
                 with profile(activities= activities, profile_memory=True) as prof:
                     with record_function("model_training"):
                         outputs = model(inputs)
-                        print(f"GPU status after forward pass: {get_gpu_info(current_gpu)}")
+
                         loss = criterion(
                             outputs.transpose(1, 2), targets
                         )  # Adjust for cross-entropy expecting class dimension at dim=1
