@@ -28,15 +28,6 @@ def main():
         config=OmegaConf.to_container(config, resolve=True)
     )
 
-    # Setup the data loader using configuration.
-    train_loader, vocab_size = get_clm_dataloader(
-        tokenizer_name=config.dataloader.tokenizer_name,
-        dataset_name=config.dataloader.dataset_name,
-        dataset_config=config.dataloader.dataset_config,
-        seq_len=config.dataloader.seq_len,
-        batch_size=config.dataloader.batch_size,
-    )
-
     # Build the hybrid model using MambaMixerModel from the MambaFormer codebase.
     model = MambaMixerModel(
         n_dims=config.model.n_dims,
@@ -48,7 +39,7 @@ def main():
         n_positions=config.model.n_positions,
     )
     print(model)
-    exit(0)
+    # exit(0)
 
     # Create an optimizer.
     optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
@@ -81,6 +72,15 @@ def main():
         with_stack=True
     )
     profiler.start()
+
+    # Setup the data loader using configuration.
+    train_loader, vocab_size = get_clm_dataloader(
+        tokenizer_name=config.dataloader.tokenizer_name,
+        dataset_name=config.dataloader.dataset_name,
+        dataset_config=config.dataloader.dataset_config,
+        seq_len=config.dataloader.seq_len,
+        batch_size=config.dataloader.batch_size,
+    )
 
     # Training loop.
     for epoch in range(config.training.epochs): 
