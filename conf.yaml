@@ -2,7 +2,7 @@ model:
     n_embd: 512  
     n_layer: 12  
     n_dims: 64   
-    interleave: True
+    interleave: False  # Changed from True to False
     mixed_attn: "mambaformer"  # "standard" or "mambaformer"
     n_positions: 512  # 1024 
 

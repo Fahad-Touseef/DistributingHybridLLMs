@@ -17,7 +17,10 @@ class BaseModel(nn.Module):
         self.n_layer = n_layer
         self.interleave = interleave
         self.tokenized = (vocab_size > 0)
-        assert not (self.interleave and self.tokenized)
+        assert not (self.interleave and self.tokenized), (
+            "Interleaving and tokenized inputs cannot be enabled simultaneously. "
+            "Set 'interleave' to False or ensure 'vocab_size' is <= 0."
+        )
 
         self.n_dims = -1 if self.tokenized else n_dims
         self.vocab_size = vocab_size if vocab_size > 0 else 50257
