@@ -96,7 +96,7 @@ class MambaMixerModel(BaseModel):
         n_layer=12,
         interleave=True,
         vocab_size=-1,
-        s4=False,
+        s4=False,  # Retain the parameter for compatibility.
         mamba_style_block=True,
         mixed_attn=None,
         n_positions=-1,
@@ -117,11 +117,10 @@ class MambaMixerModel(BaseModel):
         self._backbone = MixerModel(
             d_model=n_embd,
             n_layer=n_layer,
-            s4=s4,
             mamba_style_block=mamba_style_block,
             mixed_attn=mixed_attn,
             block_size=n_positions,
-            vocab_size=1, # unused
+            vocab_size=1,  # unused
         )
 
 
