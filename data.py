@@ -14,9 +14,15 @@ def get_clm_dataloader(
     tokenizer.pad_token = tokenizer.eos_token
 
     dataset = load_dataset(dataset_name, dataset_config, split="train", streaming=streaming)
+    dataset = dataset.select(range(100))  # Use only the first 100 samples for testing.
 
     def tokenize(example):
-        return tokenizer(example["text"])
+        return tokenizer(
+            example["text"], 
+            truncation=True, 
+            max_length=seq_len, 
+            padding="max_length"
+        )
 
     tokenized_dataset = dataset.map(tokenize, batched=True, remove_columns=["text"])
 
