@@ -27,12 +27,13 @@ def main():
     config = OmegaConf.load(args.config)
 
     # Initialize WandB for logging.
-    wandb.init(
-        project=config.wandb.project,
-        entity=config.wandb.entity,
-        notes=config.wandb.notes,
-        config=OmegaConf.to_container(config, resolve=True)
-    )
+    if args.local_rank == 0 or args.local_rank == -1:
+        wandb.init(
+            project=config.wandb.project,
+            entity=config.wandb.entity,
+            notes=config.wandb.notes,
+            config=OmegaConf.to_container(config, resolve=True)
+        )
 
     # Setup the data loader using configuration.
     train_loader, vocab_size = get_clm_dataloader(
@@ -101,7 +102,8 @@ def main():
 
             # Log loss and step to WandB.
             if global_step % config.wandb.log_every_steps == 0:
-                wandb.log({"loss": loss.item(), "step": global_step})
+                if model_engine.global_rank == 0:
+                    wandb.log({"loss": loss.item(), "step": global_step})
                 print(f"Step {global_step}: Loss {loss.item()}")
 
             profiler.step()  # Update profiler state.
@@ -113,7 +115,8 @@ def main():
 
     profiler.stop()
 
-    wandb.save("logs/*")
+    if model_engine.global_rank == 0:
+        wandb.save("logs/*")
 
     # Save the final model checkpoint.
     os.makedirs(config.training.out_dir, exist_ok=True)
