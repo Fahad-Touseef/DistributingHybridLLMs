@@ -42,4 +42,5 @@ def get_clm_dataloader(
     
 
     print(len(tokenizer), tokenizer.vocab_size) 
+    lm_dataset.set_format(type="torch", columns=["input_ids", "labels"])
     return DataLoader(lm_dataset, batch_size=batch_size, shuffle=not streaming), len(tokenizer)
