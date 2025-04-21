@@ -6,6 +6,7 @@ import argparse
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from torch.profiler import profile, record_function, tensorboard_trace_handler
+import json
 
 # from model import MambaMixerModel  
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel, MambaConfig
@@ -55,15 +56,14 @@ def main():
     print(model)
 
     # Load DeepSpeed configuration.
-    ds_config = OmegaConf.load(args.deepspeed_config)
-    ds_config = OmegaConf.to_container(ds_config, resolve=True)
+    with open(args.deepspeed_config, "r") as f:
+        ds_config = json.load(f)  # Load the DeepSpeed config as a dictionary
 
     # Initialize DeepSpeed with your model, optimizer, and config.
     model_engine, optimizer, _, _ = deepspeed.initialize(
-        model=model,
-        model_parameters=model.parameters(),
-        args=ds_config,
-    )
+                                args = ds_config,
+                                model=model,
+                                model_parameters=model.parameters())
 
     global_step = 0
     model.train()
