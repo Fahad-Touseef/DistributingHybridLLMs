@@ -88,8 +88,8 @@ def main():
     for epoch in range(config.training.epochs): 
         for batch in train_loader:
             # Assume batch contains input_ids and labels
-            input_ids = batch["input_ids"]
-            labels = batch["labels"]
+            input_ids = batch["input_ids"].to(model_engine.device)
+            labels = batch["labels"].to(model_engine.device)
 
             # Forward pass with input_ids and labels
             loss = model_engine(input_ids=input_ids, labels=labels)
