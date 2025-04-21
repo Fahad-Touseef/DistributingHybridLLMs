@@ -46,6 +46,8 @@ def main():
         vocab_size=vocab_size,
         mixed_attn=config.model.mixed_attn,
         n_positions=config.model.n_positions,
+        ssm_cfg=config.model.ssm_cfg,  # Pass ssm_cfg from the configuration
+        attn_cfg=config.model.attn_cfg,  # Pass attn_cfg from the configuration
     )
     print(model)
     # exit(0)

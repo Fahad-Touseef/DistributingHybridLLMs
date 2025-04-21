@@ -96,10 +96,11 @@ class MambaMixerModel(BaseModel):
         n_layer=12,
         interleave=True,
         vocab_size=-1,
-        s4=False,  # Retain the parameter for compatibility.
-        mamba_style_block=True,
+        s4=False,
         mixed_attn=None,
         n_positions=-1,
+        ssm_cfg=None,
+        attn_cfg=None,
     ):
         super().__init__(
             n_dims=n_dims,
@@ -113,16 +114,30 @@ class MambaMixerModel(BaseModel):
             assert n_positions > 0
             self.wpe = nn.Embedding(n_positions, n_embd)
 
+        # Use provided ssm_cfg and attn_cfg or set defaults
+        self.ssm_cfg = ssm_cfg or {
+            "layer": "Mamba2" if s4 else "Mamba1",
+            "hidden_size": n_embd,
+            "block_size": n_positions,
+        }
+        self.attn_cfg = attn_cfg or {
+            "num_heads": 8,
+            "dropout": 0.1,
+        }
+
         self.name = f"{'s4' if s4 else 'mamba'}_embd={n_embd}_layer={n_layer}" 
         self._backbone = MixerModel(
             d_model=n_embd,
             n_layer=n_layer,
-            mamba_style_block=mamba_style_block,
-            mixed_attn=mixed_attn,
-            block_size=n_positions,
-            vocab_size=1,  # unused
+            d_intermediate=4 * n_embd,  # Example value for intermediate size.
+            vocab_size=1,  # Unused.
+            ssm_cfg=self.ssm_cfg,
+            attn_cfg=self.attn_cfg,
+            norm_epsilon=1e-5,
+            rms_norm=True,  # Enable RMSNorm for stability.
+            fused_add_norm=True,  # Enable fused add + norm for performance.
+            residual_in_fp32=True,  # Use FP32 for residual connections.
         )
-
 
     def forward(self, input_ids, labels=None):
         """
