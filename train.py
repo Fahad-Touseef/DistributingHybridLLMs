@@ -88,8 +88,8 @@ def main():
     for epoch in range(config.training.epochs): 
         for batch in train_loader:
             # Assume batch contains input_ids and labels
-            input_ids = batch["input_ids"]
-            labels = batch["labels"]
+            input_ids = torch.tensor(batch["input_ids"])
+            labels = torch.tensor(batch["labels"])
 
             # Forward pass with input_ids and labels
             loss = model_engine(input_ids=input_ids, labels=labels)
