@@ -1,8 +1,9 @@
 torch>=2.0.0
 transformers>=4.33.0
 datasets>=2.14.0
-deepspeed>=0.9.5
+deepspeed==0.16.7
 wandb>=0.15.0
 omegaconf>=2.3.0
 tensorboard>=2.13.0
 mamba-ssm==2.2.4
+# mpi4py==version
