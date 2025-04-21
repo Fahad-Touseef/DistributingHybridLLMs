@@ -92,12 +92,10 @@ def main():
             input_ids = batch["input_ids"].to(model_engine.device)
             labels = batch["labels"].to(model_engine.device)
 
-            logits = model_engine(input_ids=input_ids)  # shape: (B, T, V)
-            if model_engine.global_rank == 0:
-                print(logits)
+            output = model_engine(input_ids=input_ids)  # shape: (B, T, V)
 
             loss = F.cross_entropy(
-                logits[:, :-1, :].reshape(-1, logits.size(-1)),
+                output.logits[:, :-1, :].reshape(-1, logits.size(-1)),
                 labels[:, 1:].reshape(-1),
                 ignore_index=pad_token_id
             )
