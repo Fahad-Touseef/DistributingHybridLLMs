@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from torch.profiler import profile, record_function, tensorboard_trace_handler
 import json
+import torch.nn.functional as F
 
 # from model import MambaMixerModel  
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel, MambaConfig
@@ -36,7 +37,7 @@ def main():
         )
 
     # Setup the data loader using configuration.
-    train_loader, vocab_size = get_clm_dataloader(
+    train_loader, vocab_size, pad_token_id = get_clm_dataloader(
         tokenizer_name=config.dataloader.tokenizer_name,
         dataset_name=config.dataloader.dataset_name,
         dataset_config=config.dataloader.dataset_config,
@@ -54,11 +55,13 @@ def main():
                                 attn_cfg=config.model.attn_cfg,  # Pass attn_cfg from the configuration
                             )
 
-    print(mamba_config)
+    if model_engine.global_rank == 0:
+        print(mamba_config)
 
     # Build the hybrid model using MambaLMHeadModel
     model = MambaLMHeadModel(mamba_config)
-    print(model)
+    if model_engine.global_rank == 0:
+        print(model)
 
     # # Load DeepSpeed configuration.
     # with open(args.deepspeed_config, "r") as f:
@@ -91,8 +94,14 @@ def main():
             input_ids = batch["input_ids"].to(model_engine.device)
             labels = batch["labels"].to(model_engine.device)
 
-            # Forward pass with input_ids and labels
-            loss = model_engine(input_ids=input_ids, labels=labels)
+            logits = model_engine(input_ids=input_ids)  # shape: (B, T, V)
+            print(logits.shape)
+
+            loss = F.cross_entropy(
+                logits[:, :-1, :].reshape(-1, logits.size(-1)),
+                input_ids[:, 1:].reshape(-1),
+                ignore_index=pad_token_id
+            )
 
             # Backward pass and optimization
             model_engine.backward(loss)  # Backward pass via DeepSpeed.
