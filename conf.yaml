@@ -1,6 +1,6 @@
 model:
     n_embd: 512  
-    n_layer: 12  
+    n_layer: 13  # Updated to ensure the last layer is a Mamba layer
     n_dims: 64   
     interleave: False  # Changed from True to False
     mixed_attn: "mambaformer"  # "standard" or "mambaformer"
@@ -11,6 +11,9 @@ model:
     attn_cfg:  # Configuration for the attention mechanism
         num_heads: 8
         dropout: 0.1
+    attn_layer_idx: [1, 3, 5, 7, 9, 11]  # MHA layers are at odd indices; Mamba layers are at even indices
+    fused_add_norm: True  # Enable fused add + norm for performance
+    residual_in_fp32: True  # Use FP32 for residual connections
 
 dataloader:
     tokenizer_name: "gpt2"

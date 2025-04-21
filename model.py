@@ -101,6 +101,9 @@ class MambaMixerModel(BaseModel):
         n_positions=-1,
         ssm_cfg=None,
         attn_cfg=None,
+        attn_layer_idx=None,  # Add attn_layer_idx parameter
+        fused_add_norm=False,
+        residual_in_fp32=False,
     ):
         super().__init__(
             n_dims=n_dims,
@@ -115,27 +118,31 @@ class MambaMixerModel(BaseModel):
             self.wpe = nn.Embedding(n_positions, n_embd)
 
         # Use provided ssm_cfg and attn_cfg or set defaults
-        self.ssm_cfg = ssm_cfg or {
-            "layer": "Mamba2" if s4 else "Mamba1",
-            **({"block_size": n_positions} if not s4 else {}),  # Exclude block_size for Mamba2
-        }
-        self.attn_cfg = attn_cfg or {
-            "num_heads": 8,
-            "dropout": 0.1,
-        }
+        self.ssm_cfg = ssm_cfg 
+        # or {
+        #     "layer": "Mamba2" if s4 else "Mamba1",
+        #     **({"block_size": n_positions} if not s4 else {}),
+        # }
+        self.attn_cfg = attn_cfg 
+        # or {
+        #     "num_heads": 8,
+        #     "dropout": 0.1,
+        # }
+        print(ssm_cfg, attn_cfg)
 
-        self.name = f"{'s4' if s4 else 'mamba'}_embd={n_embd}_layer={n_layer}" 
+        self.name = f"MambaFormer_embd={n_embd}_layer={n_layer}" 
         self._backbone = MixerModel(
             d_model=n_embd,
             n_layer=n_layer,
             d_intermediate=4 * n_embd,  # Example value for intermediate size.
-            vocab_size=1,  # Unused.
+            vocab_size=self.vocab_size,
             ssm_cfg=self.ssm_cfg,
             attn_cfg=self.attn_cfg,
+            attn_layer_idx=attn_layer_idx,  # Pass attn_layer_idx to MixerModel
             norm_epsilon=1e-5,
             rms_norm=True,  # Enable RMSNorm for stability.
-            fused_add_norm=True,  # Enable fused add + norm for performance.
-            residual_in_fp32=True,  # Use FP32 for residual connections.
+            fused_add_norm=fused_add_norm,  # Enable fused add + norm for performance.
+            residual_in_fp32=residual_in_fp32,  # Use FP32 for residual connections.
         )
 
     def forward(self, input_ids, labels=None):

@@ -48,6 +48,9 @@ def main():
         n_positions=config.model.n_positions,
         ssm_cfg=config.model.ssm_cfg,  # Pass ssm_cfg from the configuration
         attn_cfg=config.model.attn_cfg,  # Pass attn_cfg from the configuration
+        attn_layer_idx=config.model.attn_layer_idx,  # Pass attn_layer_idx from the configuration
+        fused_add_norm=config.model.fused_add_norm,  # Pass fused_add_norm from the configuration
+        residual_in_fp32=config.model.residual_in_fp32,  # Pass residual_in_fp32 from the configuration
     )
     print(model)
     # exit(0)
