@@ -117,8 +117,7 @@ class MambaMixerModel(BaseModel):
         # Use provided ssm_cfg and attn_cfg or set defaults
         self.ssm_cfg = ssm_cfg or {
             "layer": "Mamba2" if s4 else "Mamba1",
-            "hidden_size": n_embd,
-            "block_size": n_positions,
+            **({"block_size": n_positions} if not s4 else {}),  # Exclude block_size for Mamba2
         }
         self.attn_cfg = attn_cfg or {
             "num_heads": 8,

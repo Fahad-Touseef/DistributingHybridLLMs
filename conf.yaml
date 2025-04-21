@@ -6,7 +6,7 @@ model:
     mixed_attn: "mambaformer"  # "standard" or "mambaformer"
     n_positions: 512  # 1024
     ssm_cfg:  # Configuration for the state-space model (SSM) layer
-        layer: "Mamba2"  # Use "Mamba2" for hybrid MambaFormer-style
+        layer: "Mamba1"  # Changed to "Mamba1" for MambaFormer-style
         block_size: 512
     attn_cfg:  # Configuration for the attention mechanism
         num_heads: 8
