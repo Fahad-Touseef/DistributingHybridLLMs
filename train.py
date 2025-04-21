@@ -61,7 +61,7 @@ def main():
 
     # Initialize DeepSpeed with your model, optimizer, and config.
     model_engine, optimizer, _, _ = deepspeed.initialize(
-                                args = ds_config,
+                                args = args,
                                 model=model,
                                 model_parameters=model.parameters())
 
