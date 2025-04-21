@@ -7,7 +7,8 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 from torch.profiler import profile, record_function, tensorboard_trace_handler
 
-from model import MambaMixerModel  
+# from model import MambaMixerModel  
+from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel, MambaConfig
 from data import get_clm_dataloader
 
 def main():
@@ -37,23 +38,21 @@ def main():
         batch_size=config.dataloader.batch_size,
     )
 
-    # Build the hybrid model using MambaMixerModel from the MambaFormer codebase.
-    model = MambaMixerModel(
-        n_dims=config.model.n_dims,
-        n_embd=config.model.n_embd,
-        n_layer=config.model.n_layer,
-        interleave=config.model.interleave,
-        vocab_size=vocab_size,
-        mixed_attn=config.model.mixed_attn,
-        n_positions=config.model.n_positions,
-        ssm_cfg=config.model.ssm_cfg,  # Pass ssm_cfg from the configuration
-        attn_cfg=config.model.attn_cfg,  # Pass attn_cfg from the configuration
-        attn_layer_idx=config.model.attn_layer_idx,  # Pass attn_layer_idx from the configuration
-        fused_add_norm=config.model.fused_add_norm,  # Pass fused_add_norm from the configuration
-        residual_in_fp32=config.model.residual_in_fp32,  # Pass residual_in_fp32 from the configuration
-    )
+    # Create the MambaConfig
+    mamba_config = MambaConfig(
+                                d_model = config.model.n_embd,
+                                n_layer = config.model.n_layer,
+                                vocab_size = vocab_size,
+                                ssm_cfg=config.model.ssm_cfg,  # Pass ssm_cfg from the configuration
+                                attn_layer_idx=config.model.attn_layer_idx,  # Pass attn_layer_idx from the configuration
+                                attn_cfg=config.model.attn_cfg,  # Pass attn_cfg from the configuration
+                            )
+
+    print(mamba_config)
+
+    # Build the hybrid model using MambaLMHeadModel
+    model = MambaLMHeadModel(mamba_config)
     print(model)
-    # exit(0)
 
     # Create an optimizer.
     optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
