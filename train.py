@@ -88,8 +88,8 @@ def main():
     for epoch in range(config.training.epochs): 
         for batch in train_loader:
             # Assume batch contains input_ids and labels
-            input_ids = batch["input_ids"].to(model.device)
-            labels = batch["labels"].to(model.device)
+            input_ids = batch["input_ids"]
+            labels = batch["labels"]
 
             # Forward pass with input_ids and labels
             loss = model_engine(input_ids=input_ids, labels=labels)
@@ -106,14 +106,17 @@ def main():
                     wandb.log({"loss": loss.item(), "step": global_step})
                 print(f"Step {global_step}: Loss {loss.item()}")
 
-            profiler.step()  # Update profiler state.
+            # Step profiler (only from rank 0)
+            if model_engine.global_rank == 0:
+                profiler.step()
 
             if global_step >= config.training.train_steps:
                 break
         if global_step >= config.training.train_steps:
             break
 
-    profiler.stop()
+    if model_engine.global_rank == 0:
+        profiler.stop()
 
     if model_engine.global_rank == 0:
         wandb.save("logs/*")
