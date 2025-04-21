@@ -16,6 +16,7 @@ def main():
     # Parse command line arguments.
     parser = argparse.ArgumentParser(description="Training script", allow_abbrev=False)
     parser.add_argument("--config", type=str, default="conf.yaml", help="Path to training config YAML")
+    parser.add_argument("--local_rank", type=int, default=-1, help="Local rank passed by deepspeed launcher")
 
     # This adds DeepSpeed's arguments (including --deepspeed_config)
     deepspeed.add_config_arguments(parser)
