@@ -7,7 +7,7 @@ model:
     n_positions: 512  # 1024
     ssm_cfg:  # Configuration for the state-space model (SSM) layer
         layer: "Mamba1"  # Changed to "Mamba1" for MambaFormer-style
-        block_size: 512
+        # block_size: 512
     attn_cfg:  # Configuration for the attention mechanism
         num_heads: 8
         dropout: 0.1

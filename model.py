@@ -117,24 +117,16 @@ class MambaMixerModel(BaseModel):
             assert n_positions > 0
             self.wpe = nn.Embedding(n_positions, n_embd)
 
-        # Use provided ssm_cfg and attn_cfg or set defaults
-        self.ssm_cfg = ssm_cfg 
-        # or {
-        #     "layer": "Mamba2" if s4 else "Mamba1",
-        #     **({"block_size": n_positions} if not s4 else {}),
-        # }
-        self.attn_cfg = attn_cfg 
-        # or {
-        #     "num_heads": 8,
-        #     "dropout": 0.1,
-        # }
+        # Use provided ssm_cfg and attn_cfg
+        self.ssm_cfg = ssm_cfg
+        self.attn_cfg = attn_cfg
         print(ssm_cfg, attn_cfg)
 
         self.name = f"MambaFormer_embd={n_embd}_layer={n_layer}" 
         self._backbone = MixerModel(
             d_model=n_embd,
             n_layer=n_layer,
-            d_intermediate=4 * n_embd,  # Example value for intermediate size.
+            d_intermediate=0,  # Set to 0 to remove MLP
             vocab_size=self.vocab_size,
             ssm_cfg=self.ssm_cfg,
             attn_cfg=self.attn_cfg,
