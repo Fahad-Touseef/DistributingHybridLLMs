@@ -14,9 +14,12 @@ from data import get_clm_dataloader
 
 def main():
     # Parse command line arguments.
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Training script", allow_abbrev=False)
     parser.add_argument("--config", type=str, default="conf.yaml", help="Path to training config YAML")
-    parser.add_argument("--deepspeed_config", type=str, default="ds_config.json", help="Path to DeepSpeed config JSON")
+
+    # This adds DeepSpeed's arguments (including --deepspeed_config)
+    deepspeed.add_config_arguments(parser)
+
     args = parser.parse_args()
 
     # Load training configuration.
@@ -55,15 +58,16 @@ def main():
     model = MambaLMHeadModel(mamba_config)
     print(model)
 
-    # Load DeepSpeed configuration.
-    with open(args.deepspeed_config, "r") as f:
-        ds_config = json.load(f)  # Load the DeepSpeed config as a dictionary
+    # # Load DeepSpeed configuration.
+    # with open(args.deepspeed_config, "r") as f:
+    #     ds_config = json.load(f)  # Load the DeepSpeed config as a dictionary
 
     # Initialize DeepSpeed with your model, optimizer, and config.
     model_engine, optimizer, _, _ = deepspeed.initialize(
-                                args = args,
-                                model=model,
-                                model_parameters=model.parameters())
+    args = args,
+    model=model,
+    model_parameters=model.parameters())
+
 
     global_step = 0
     model.train()
