@@ -55,14 +55,6 @@ def main():
                                 attn_cfg=config.model.attn_cfg,  # Pass attn_cfg from the configuration
                             )
 
-    if model_engine.global_rank == 0:
-        print(mamba_config)
-
-    # Build the hybrid model using MambaLMHeadModel
-    model = MambaLMHeadModel(mamba_config)
-    if model_engine.global_rank == 0:
-        print(model)
-
     # # Load DeepSpeed configuration.
     # with open(args.deepspeed_config, "r") as f:
     #     ds_config = json.load(f)  # Load the DeepSpeed config as a dictionary
@@ -73,6 +65,13 @@ def main():
     model=model,
     model_parameters=model.parameters())
 
+    if model_engine.global_rank == 0:
+        print(mamba_config)
+
+    # Build the hybrid model using MambaLMHeadModel
+    model = MambaLMHeadModel(mamba_config)
+    if model_engine.global_rank == 0:
+        print(model)
 
     global_step = 0
     model.train()
