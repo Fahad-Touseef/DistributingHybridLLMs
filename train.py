@@ -54,23 +54,15 @@ def main():
     model = MambaLMHeadModel(mamba_config)
     print(model)
 
-    # Create an optimizer.
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate)
-
-    # Add a learning rate scheduler.
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #     optimizer, T_max=config.training.train_steps
-    # )
-
     # Load DeepSpeed configuration.
     ds_config = OmegaConf.load(args.deepspeed_config)
     ds_config = OmegaConf.to_container(ds_config, resolve=True)
 
     # Initialize DeepSpeed with your model, optimizer, and config.
-    model, optimizer, _, _ = deepspeed.initialize(
+    model_engine, optimizer, _, _ = deepspeed.initialize(
         model=model,
-        optimizer=optimizer,
-        config=ds_config,
+        model_parameters=model.parameters(),
+        args=ds_config,
     )
 
     global_step = 0
@@ -94,12 +86,11 @@ def main():
             labels = batch["labels"].to(model.device)
 
             # Forward pass with input_ids and labels
-            loss = model(input_ids=input_ids, labels=labels)
+            loss = model_engine(input_ids=input_ids, labels=labels)
 
             # Backward pass and optimization
-            model.backward(loss)  # Backward pass via DeepSpeed.
-            model.step()          # Update model parameters.
-            # scheduler.step()      # Update learning rate.
+            model_engine.backward(loss)  # Backward pass via DeepSpeed.
+            model_engine.step()          # Update model parameters.
 
             global_step += 1
 
