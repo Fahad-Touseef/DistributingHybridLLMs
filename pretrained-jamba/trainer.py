@@ -20,12 +20,12 @@ def main(args):
     # Initialize the tokenizer
     tokenizer = AutoTokenizer.from_pretrained("ai21labs/Jamba-v0.1")
     def preprocess_function(examples):
-        return tokenizer(examples["text"], truncation=True)  # padding left to collator
+        return tokenizer(examples["text"], truncation=True, max_length= 700)  # padding left to collator
     tokenized_imdb = imdb.map(preprocess_function, batched=True)
 
     tokenized_imdb = tokenized_imdb.remove_columns(["text"])
     tokenized_imdb.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer,padding=True,max_length=700)
     #outputs = model.generate(input_ids, max_new_tokens=216)
 
     train_dataloader = DataLoader(
@@ -86,21 +86,27 @@ def main(args):
     # Loss function and optimizer
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     # Training loop
-    epochs = 5
     activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA]
+    
+    epochs = 3
     for epoch in range(epochs):
-        prof = torch.profiler.profile(
-            activities=activities,
-            schedule=torch.profiler.schedule(wait=5, warmup=5, active=1),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./logs/jamba/profiler/epoch_{epoch+1}'),
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=True
-        )
-        prof.start()
         model.train() 
         total_loss = 0
+        # start profiling after epoch 1
+        if epoch == 1:
+            prof = torch.profiler.profile(
+                activities=activities,
+                schedule=torch.profiler.schedule(wait=2, warmup=2, active=3),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./logs/jamba/profiler{epoch}'),
+                record_shapes=False,
+                profile_memory=True,
+                with_stack=False
+            )
+            prof.start()
+        time_per_batch = []
         for step, batch in enumerate(train_dataloader):
+            if epoch ==1:
+                prof.step()
             start_time = time.time()
             optimizer.zero_grad()  # Zero the gradients
             inputs = batch['input_ids'].to(device)
@@ -108,9 +114,9 @@ def main(args):
             targets = batch['labels'].to(device)
             #print("Data_size", get_tensor_size_in_mb(inputs)+ get_tensor_size_in_mb(attention_mask) + get_tensor_size_in_mb(targets))
             # Forward pass
-            with profile(activities=activities, profile_memory=True) as p:
-                outputs = model(input_ids = inputs, attention_mask=attention_mask,labels = targets) 
-            p.export_chrome_trace(f"epoch_{epoch+1}_step_{step} trace.json")
+            #with profile(activities=activities, profile_memory=True) as p:
+            outputs = model(input_ids = inputs, attention_mask=attention_mask,labels = targets) 
+            #p.export_chrome_trace(f"epoch_{epoch+1}_step_{step} trace.json")
             loss = outputs.loss
             # Backward pass and optimize
             loss.backward()
@@ -118,19 +124,27 @@ def main(args):
             end_time = time.time()
             total_loss += loss
             # Optional: log batch loss too
+            time_per_batch.append(end_time - start_time)
             writer.add_scalar('Loss/train_batch', loss, epoch * len(train_dataloader) + step)
             print(f"Time taken for batch: {end_time - start_time:.2f}", )
-            prof.step()
+
+            del inputs
+            del attention_mask
+            del targets
+            del outputs
+            torch.cuda.empty_cache()
+        if epoch == 1:
+            prof.stop()
         avg_loss = total_loss / len(train_dataloader)
         print(f"Epoch {epoch+1}, Loss: {avg_loss}")
         writer.add_scalar('Loss/train_epoch', avg_loss, epoch)
-        prof.stop()
     writer.close()
     print("Training complete!")
 
+    
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-
     parser.add_argument('--seed', type=int, default=42, metavar='S')
     args = parser.parse_args()
     main(args)
