@@ -100,6 +100,7 @@ def main():
                 labels[:, 1:].reshape(-1),
                 ignore_index=pad_token_id
             )
+            print(loss.item())
 
             # Backward pass and optimization
             model_engine.backward(loss)  # Backward pass via DeepSpeed.
@@ -114,7 +115,7 @@ def main():
                 print(f"Step {global_step}: Loss {loss.item()}")
 
             # Step profiler (only from rank 0)
-            if model_engine.global_rank == 0:
+            if model_engine.global_rank == 0 and loss.isfinite():
                 profiler.step()
 
             if global_step >= config.training.train_steps:
