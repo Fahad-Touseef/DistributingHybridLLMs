@@ -115,7 +115,7 @@ def main():
                 print(f"Step {global_step}: Loss {loss.item()}")
 
             # Step profiler (only from rank 0)
-            if model_engine.global_rank == 0 and not model_engine.skip_batch:
+            if model_engine.global_rank == 0 and not model_engine.optimizer_overflow:
                 profiler.step()
 
             if global_step >= config.training.train_steps:
