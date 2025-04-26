@@ -11,19 +11,21 @@ import torch.optim as optim
 import sys
 import time
 from datetime import datetime
-
+import deepspeed
 import argparse
+
 
 def main(args):
 
     # Load the IMDB dataset from Hugging Face
-    
+    if args.local_rank == -1:
+        torch.cuda.set_device(args.local_rank)
+        device = torch.device("cuda", args.local_rank)
+    else:
+        device = torch.device("cuda", args.local_rank)
     torch.manual_seed(args.seed)
-    acclerator = Accelerator()
-    batch_size = 16
-    device  = acclerator.device
-    print("Device", device)
-
+    
+    batch_size = args.batch
     imdb = load_dataset("imdb")
     # Initialize the tokenizer
     tokenizer = AutoTokenizer.from_pretrained("ai21labs/Jamba-v0.1")
@@ -42,6 +44,34 @@ def main(args):
         batch_size=batch_size,
         collate_fn=data_collator
     )
+
+    ds_config = {
+        "train_batch_size": batch_size,  # Adjust to your needs
+        "fp16": {
+            "enabled": True
+        },
+        "zero_optimization": {
+            "stage": 2,  # Stage 2 is usually a good balance
+            "offload_optimizer": {
+                "device": "cpu",
+                "pin_memory": True
+            }
+        },
+        "optimizer": {
+            "type": "Adam",
+            "params": {
+                "lr": 1e-4,
+                "betas": [0.9, 0.999],
+                "eps": 1e-8,
+                "weight_decay": 0.01
+            }
+        },
+        "gradient_accumulation_steps": 1,
+        "wall_clock_breakdown": False
+    }
+
+
+
 
     jamba_config = {
         "vocab_size": len(tokenizer.vocab),
@@ -84,6 +114,14 @@ def main(args):
     # )
     jambaconfig = JambaConfig(**jamba_config)
     model  = JambaForSequenceClassification(jambaconfig)
+    # Loss function and optimizer
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    model_engine, optimizer, _, _ = deepspeed.initialize(
+        model=model,
+        model_parameters=model.parameters(),
+        config=ds_config
+    )
 
     #summary writer
     # TensorBoard writer setup
@@ -91,15 +129,12 @@ def main(args):
 
     #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # Loss function and optimizer
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-    model, optimizer, train_dataloader = acclerator.prepare(model, optimizer, train_dataloader)
     with open("model.txt", "w") as f:
         f.write(str(model))
-     #model.to(device)
+    #model.to(device)
     activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA]
-
+    # Training loop
+    # start profiling after epoch 1
     prof = torch.profiler.profile(
         activities=activities,
         schedule=torch.profiler.schedule(wait=2, # #during the first 2 epochs profile is not active
@@ -111,74 +146,68 @@ def main(args):
         profile_memory=True,
         with_stack=False,
     )
-   
-    # Training loop
+    prof.start()
     epochs = 1
     for epoch in range(epochs):
-        model.train() 
+        #model.train() 
         total_loss = 0
-        # # start profiling after epoch 1
-        # prof = torch.profiler.profile(
-        #     activities=activities,
-        #     schedule=torch.profiler.schedule(wait=5, # #during the first 2 epochs profile is not active
-        #                                      warmup=2, # during this phase profiler starts tracing, but the results are discarded
-        #                                      active = 6, # actively record the next 6 steps 
-        #                                      repeat = 2), # specififes an uppper boun on the  number of cycles
-        #     on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./logs/jamba/profiler{epoch}_{datetime.now().strftime("%Y%m%d-%H%M%S")}', worker_name="worker"),
-        #     record_shapes=False,
-        #     profile_memory=True,
-        #     with_stack=False
-        # )
-        prof.start()  
+        
         time_per_batch = []
         for step, batch in enumerate(train_dataloader):
             prof.step()
-            if step >= 9:
-                break
             start_time = time.time()
-            optimizer.zero_grad()  # Zero the gradients
-            inputs = batch['input_ids']
-            attention_mask = batch['attention_mask']
-            targets = batch['labels']
+            if step >= 2 + 2+ 5:
+                break
+            #optimizer.zero_grad()  # Zero the gradients # deepspeed handles this
+            inputs = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            targets = batch['labels'].to(device)
+
+            #batch = batch.to(device)
             #print("Data_size", get_tensor_size_in_mb(inputs)+ get_tensor_size_in_mb(attention_mask) + get_tensor_size_in_mb(targets))
             # Forward pass
             #with profile(activities=activities, profile_memory=True) as p:
-            with record_function("model_forward"):
-                outputs = model(inputs, attention_mask=attention_mask, labels=targets) 
             #p.export_chrome_trace(f"epoch_{epoch+1}_step_{step} trace.json")
+            with record_function("model_forward"):
+                outputs = model_engine(inputs, attention_mask=attention_mask, labels=targets) 
             loss = outputs.loss
-            acclerator.backward(loss)
             # Backward pass and optimize
             #loss.backward()
-            optimizer.step()
+            model_engine.backward(loss)
+            model_engine.step()
             end_time = time.time()
             total_loss += loss
-            prof.step()
             # Optional: log batch loss too
             time_per_batch.append(end_time - start_time)
             writer.add_scalar('Loss/train_batch', loss, epoch * len(train_dataloader) + step)
             print(f"Time taken for batch: {end_time - start_time:.2f}", )
 
-
-            # del inputs
-            # del attention_mask
-            # del targets
-            # del outputs
-            #torch.cuda.empty_cache()
+            del inputs
+            del attention_mask
+            del targets
+            del outputs
+            # torch.cuda.empty_cache()
         print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-        prof.stop()
+        
         avg_loss = total_loss / len(train_dataloader)
         print(f"Epoch {epoch+1}, Loss: {avg_loss}")
         writer.add_scalar('Loss/train_epoch', avg_loss, epoch)
+    prof.stop()
     writer.close()
     print("Training complete!")
 
     # add model evaluation
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
+    parser = argparse.ArgumentParser(description='PyTorch Distributed Training Example')
     parser.add_argument('--seed', type=int, default=42, metavar='S')
+  
+    # Add this line to accept local_rank from DeepSpeed
+    parser.add_argument('--local_rank', type=int, default=-1, 
+                        help='local rank passed from distributed launcher')
+    parser.add_argument('--batch', type=int, default=16, help='Batch size for training')
     args = parser.parse_args()
+    
     main(args)
 
 

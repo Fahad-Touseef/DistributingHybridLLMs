@@ -1,9 +1,13 @@
+from accelerate import Accelerator
+from accelerate.utils import MegatronLMDummyScheduler
+
+
 from transformers import AutoModelForCausalLM, AutoTokenizer, JambaForSequenceClassification, JambaConfig
 from torch.utils.data import DataLoader
 from transformers import DataCollatorWithPadding
 from torch.utils.tensorboard import SummaryWriter
 from torch.profiler import profile, record_function, ProfilerActivity
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedType
 from datasets import load_dataset
 import torch
 import torch.nn as nn
@@ -12,16 +16,34 @@ import sys
 import time
 from datetime import datetime
 
+from accelerate.utils import MegatronLMPlugin
+
 import argparse
+import traceback
 
 def main(args):
 
     # Load the IMDB dataset from Hugging Face
     
     torch.manual_seed(args.seed)
-    acclerator = Accelerator()
+
+    megatron_lm_plugin = MegatronLMPlugin(
+            num_micro_batches=2,
+            pipeline_model_parallel_size=2,
+            custom_partition_fn=None,
+            precision="fp16",  # "fp16", "bf16" or "fp32"
+        )
+
+    try:
+        accelerator = Accelerator(deep_speed_plugin=megatron_lm_plugin)
+    except ImportError:
+        print("Import error details:")
+        traceback.print_exc()
+    #accelerator = Accelerator()
+
+    #accelerator = Accelerator()
     batch_size = 16
-    device  = acclerator.device
+    device  = accelerator.device
     print("Device", device)
 
     imdb = load_dataset("imdb")
@@ -90,11 +112,24 @@ def main(args):
     writer = SummaryWriter(log_dir='./logs/jamba')
 
     #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     # Loss function and optimizer
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    model, optimizer, train_dataloader = acclerator.prepare(model, optimizer, train_dataloader)
+    if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+        lr_scheduler = MegatronLMDummyScheduler(
+            optimizer=optimizer,
+            total_num_steps=args.max_train_steps,
+            warmup_num_steps=args.num_warmup_steps,
+        )
+    else:
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.1)
+    if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+        total_batch_size = accelerator.state.megatron_lm_plugin.global_batch_size
+    print(f"Total batch size: {total_batch_size}")
+   
+
+    model, optimizer, train_dataloader, lr_scheduler= accelerator.prepare(model, optimizer, train_dataloader, lr_scheduler)
     with open("model.txt", "w") as f:
         f.write(str(model))
      #model.to(device)
@@ -147,7 +182,7 @@ def main(args):
                 outputs = model(inputs, attention_mask=attention_mask, labels=targets) 
             #p.export_chrome_trace(f"epoch_{epoch+1}_step_{step} trace.json")
             loss = outputs.loss
-            acclerator.backward(loss)
+            accelerator.backward(loss)
             # Backward pass and optimize
             #loss.backward()
             optimizer.step()
@@ -156,7 +191,8 @@ def main(args):
             prof.step()
             # Optional: log batch loss too
             time_per_batch.append(end_time - start_time)
-            writer.add_scalar('Loss/train_batch', loss, epoch * len(train_dataloader) + step)
+            if accelerator.is_main_process:
+                writer.add_scalar('Loss/train_batch', loss, epoch * len(train_dataloader) + step)
             print(f"Time taken for batch: {end_time - start_time:.2f}", )
 
 
