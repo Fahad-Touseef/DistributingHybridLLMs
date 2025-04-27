@@ -112,23 +112,14 @@ def main(args):
         with_stack=False,
     )
    
+    # check split of model
+    # print("model split", model.hf_split_points) 
+
     # Training loop
     epochs = 1
     for epoch in range(epochs):
         model.train() 
         total_loss = 0
-        # # start profiling after epoch 1
-        # prof = torch.profiler.profile(
-        #     activities=activities,
-        #     schedule=torch.profiler.schedule(wait=5, # #during the first 2 epochs profile is not active
-        #                                      warmup=2, # during this phase profiler starts tracing, but the results are discarded
-        #                                      active = 6, # actively record the next 6 steps 
-        #                                      repeat = 2), # specififes an uppper boun on the  number of cycles
-        #     on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./logs/jamba/profiler{epoch}_{datetime.now().strftime("%Y%m%d-%H%M%S")}', worker_name="worker"),
-        #     record_shapes=False,
-        #     profile_memory=True,
-        #     with_stack=False
-        # )
         prof.start()  
         time_per_batch = []
         for step, batch in enumerate(train_dataloader):

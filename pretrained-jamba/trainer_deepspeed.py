@@ -3,7 +3,6 @@ from torch.utils.data import DataLoader
 from transformers import DataCollatorWithPadding
 from torch.utils.tensorboard import SummaryWriter
 from torch.profiler import profile, record_function, ProfilerActivity
-from accelerate import Accelerator
 from datasets import load_dataset
 import torch
 import torch.nn as nn
@@ -17,6 +16,7 @@ import argparse
 
 def main(args):
 
+    deepspeed.init_distributed()
     # Load the IMDB dataset from Hugging Face
     if args.local_rank == -1:
         torch.cuda.set_device(args.local_rank)
@@ -44,34 +44,6 @@ def main(args):
         batch_size=batch_size,
         collate_fn=data_collator
     )
-
-    ds_config = {
-        "train_batch_size": batch_size,  # Adjust to your needs
-        "fp16": {
-            "enabled": True
-        },
-        "zero_optimization": {
-            "stage": 2,  # Stage 2 is usually a good balance
-            "offload_optimizer": {
-                "device": "cpu",
-                "pin_memory": True
-            }
-        },
-        "optimizer": {
-            "type": "Adam",
-            "params": {
-                "lr": 1e-4,
-                "betas": [0.9, 0.999],
-                "eps": 1e-8,
-                "weight_decay": 0.01
-            }
-        },
-        "gradient_accumulation_steps": 1,
-        "wall_clock_breakdown": False
-    }
-
-
-
 
     jamba_config = {
         "vocab_size": len(tokenizer.vocab),
@@ -117,9 +89,48 @@ def main(args):
     # Loss function and optimizer
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    model_engine, optimizer, _, _ = deepspeed.initialize(
+    ds_config = {
+        "train_micro_batch_size_per_gpu": batch_size//4,
+        "gradient_accumulation_steps": 1,
+        "fp16": {
+            "enabled": True
+        },
+        "pipeline": {
+            "enabled": True,
+            "micro_batches": 4,
+            "partitions": 2  # Number of pipeline stages
+        },
+        "optimizer": {
+            "type": "Adam",
+            "params": {
+                "lr": 1e-4,
+                "betas": [0.9, 0.999],
+                "eps": 1e-8,
+                "weight_decay": 0.01
+            }
+        },
+    }
+
+    # ds_config = {
+    #     "train_batch_size": batch_size,  # Adjust to your needs
+    #     "fp16": {
+    #         "enabled": True
+    #     },
+    #     "zero_optimization": {
+    #         "stage": 2,  # Stage 2 is usually a good balance
+    #         "offload_optimizer": {
+    #             "device": "cpu",
+    #             "pin_memory": True
+    #         }
+    #     },
+        
+    #     "gradient_accumulation_steps": 1,
+    #     "wall_clock_breakdown": False
+    # }
+
+    model_engine, train_dataloader, _ = deepspeed.initialize(
         model=model,
-        model_parameters=model.parameters(),
+        training_data=tokenized_imdb["train"],
         config=ds_config
     )
 
