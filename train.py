@@ -130,8 +130,7 @@ def main():
     # Save the final model checkpoint.
     if model_engine.global_rank == 0:
         wandb.finish()
-        os.makedirs(config.training.out_dir, exist_ok=True)
-        model_engine.save_checkpoint(config.training.out_dir)
+        model.save_pretrained(config.training.out_dir)
         print(f"Model checkpoint saved to {config.training.out_dir}")
 
 if __name__ == '__main__':
