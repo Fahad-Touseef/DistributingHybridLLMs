@@ -33,4 +33,4 @@ wandb:
     project: "mambaformer_training"
     entity: "fahad15-university-of-wisconsin-madison"
     notes: "Distributing training of mambaformer"
-    log_every_steps: 10000
+    log_every_steps: 50 #10000
