@@ -4,9 +4,8 @@ import deepspeed
 import wandb
 import argparse
 from omegaconf import OmegaConf
-from torch.utils.data import DataLoader
-from torch.profiler import profile, record_function, tensorboard_trace_handler
-import json
+# from torch.utils.data import DataLoader
+# from torch.profiler import profile, record_function, tensorboard_trace_handler
 import torch.nn.functional as F
 
 # from model import MambaMixerModel  
@@ -28,7 +27,7 @@ def main():
     config = OmegaConf.load(args.config)
 
     # Initialize WandB for logging.
-    if args.local_rank == 0 or args.local_rank == -1:
+    if args.local_rank in (0, -1):
         wandb.init(
             project=config.wandb.project,
             entity=config.wandb.entity,
@@ -58,10 +57,6 @@ def main():
     # Build the hybrid model using MambaLMHeadModel
     model = MambaLMHeadModel(mamba_config)
 
-    # # Load DeepSpeed configuration.
-    # with open(args.deepspeed_config, "r") as f:
-    #     ds_config = json.load(f)  # Load the DeepSpeed config as a dictionary
-
     # Initialize DeepSpeed with your model, optimizer, and config.
     model_engine, optimizer, _, _ = deepspeed.initialize(
     args = args,
@@ -75,20 +70,19 @@ def main():
     global_step = 0
     model.train()
 
-    # Set up the PyTorch profiler.
-    profiler = profile(
-        schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-        on_trace_ready=tensorboard_trace_handler('./logs'),
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=True
-    )
-    profiler.start()
+    # # Set up the PyTorch profiler.
+    # profiler = profile(
+    #     schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+    #     on_trace_ready=tensorboard_trace_handler('./logs'),
+    #     record_shapes=True,
+    #     profile_memory=True,
+    #     with_stack=True
+    # )
+    # profiler.start()
 
     # Training loop.
     for epoch in range(config.training.epochs): 
         for batch in train_loader:
-            # Assume batch contains input_ids and labels
             input_ids = batch["input_ids"].to(model_engine.device)
             labels = batch["labels"].to(model_engine.device)
 
@@ -108,31 +102,36 @@ def main():
 
             global_step += 1
 
-            # Log loss and step to WandB.
-            if global_step % config.wandb.log_every_steps == 0:
-                if model_engine.global_rank == 0:
-                    wandb.log({"loss": loss.item(), "step": global_step})
-                print(f"Step {global_step}: Loss {loss.item()}")
+            # Logging
+            if model_engine.global_rank == 0:
+                if global_step % config.wandb.log_every_steps == 0:
+                    wandb.log({
+                        "loss": loss.item(),
+                        "step": global_step,
+                        "lr": optimizer.param_groups[0]['lr'],
+                    })
+                    print(f"Step {global_step}: Loss {loss.item()}")
 
-            # Step profiler (only from rank 0)
-            if model_engine.global_rank == 0 and not model_engine.optimizer_overflow:
-                profiler.step()
+            # # Step profiler (only from rank 0)
+            # if model_engine.global_rank == 0 and not model_engine.optimizer_overflow:
+            #     profiler.step()
 
             if global_step >= config.training.train_steps:
                 break
         if global_step >= config.training.train_steps:
             break
 
-    if model_engine.global_rank == 0:
-        profiler.stop()
+    # if model_engine.global_rank == 0:
+    #     profiler.stop()
 
-    if model_engine.global_rank == 0:
-        wandb.save("logs/*")
+    # if model_engine.global_rank == 0:
+    #     wandb.save("logs/*")
 
     # Save the final model checkpoint.
-    os.makedirs(config.training.out_dir, exist_ok=True)
-    model.save_checkpoint(config.training.out_dir)
-    print(f"Model checkpoint saved to {config.training.out_dir}")
+    if model_engine.global_rank == 0:
+        os.makedirs(config.training.out_dir, exist_ok=True)
+        model.save_checkpoint(config.training.out_dir)
+        print(f"Model checkpoint saved to {config.training.out_dir}")
 
 if __name__ == '__main__':
     main()
