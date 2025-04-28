@@ -100,8 +100,7 @@ def main():
     # Define pipeline layers
     layers = [
         # Add a lambda function to unpack input_ids from the tuple
-        lambda inputs: inputs[0],  # Unpack input_ids from (input_ids, labels)
-        model.backbone.embedding,
+        lambda inputs: model.backbone.embedding(inputs[0]),  # Apply embedding to input_ids
         *list(model.backbone.layers),
         model.backbone.norm_f,
         model.classifier
