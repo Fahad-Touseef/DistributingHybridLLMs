@@ -18,7 +18,7 @@ from deepspeed.pipe import PipelineModule
 import torch.nn as nn
 
 class ClassificationModel(nn.Module):
-    def __init__(self, backbone, d_model, num_classes=2):
+    def __init__(self, backbone, d_model, num_classes=1):
         super().__init__()
         self.backbone = backbone
         self.classifier = nn.Linear(d_model, num_classes)
