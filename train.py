@@ -46,6 +46,8 @@ def main():
     deepspeed.add_config_arguments(parser)
 
     args = parser.parse_args()
+    print(args)
+    exit(1)
 
     # Initialize the distributed backend
     init_distributed(dist_backend=args.backend)
@@ -122,12 +124,19 @@ def main():
         partition_method="parameters"
     )
 
-    # Initialize DeepSpeed with your model, optimizer, and config.
+    # Define DeepSpeed configuration
+    deepspeed_config = {
+        "steps_per_print": 5,
+        # Add other configurations if needed
+    }
+
+    # Update the DeepSpeed initialization to include the configuration
     model_engine, optimizer, _, _ = deepspeed.initialize(
         args=args,
         model=pipeline_model,
         model_parameters=pipeline_model.parameters(),
-        training_data=train_set
+        training_data=train_set,
+        config_params=deepspeed_config  # Pass the configuration here
     )
 
     if model_engine.global_rank == 0:
