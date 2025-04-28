@@ -99,12 +99,10 @@ def main():
 
     # Define pipeline layers
     layers = [
-        # Add a lambda function to unpack input_ids from the tuple
-        lambda x : print(type(x), x.shape, x.dtype, x),  # Debugging line
-        # lambda inputs: inputs[0],  # Unpack input_ids from the tuple
         model.backbone.embedding, 
         *list(model.backbone.layers),
         model.backbone.norm_f,
+        lambda x: x[:, 0, :],  # Extract the [CLS] token representation
         model.classifier
     ]
 

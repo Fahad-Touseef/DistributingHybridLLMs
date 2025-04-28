@@ -13,6 +13,9 @@
   "fp16": {
     "enabled": true        
   },
+  "zero_optimization": {
+    "stage": 2
+  },
   "pipeline": {
     "stages": 4
   },
