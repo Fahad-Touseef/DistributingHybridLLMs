@@ -35,6 +35,17 @@ class ClassificationModel(nn.Module):
         logits = self.classifier(pooled_output)
         return logits
 
+class BlockPipe(nn.Module):
+    """Wrap a Block so it only propagates `hidden_states` onward."""
+    def __init__(self, block: nn.Module):
+        super().__init__()
+        self.block = block
+
+    def forward(self, x):
+        # block(x) returns (hidden_states, residual)
+        hidden_states, _ = self.block(x)
+        return hidden_states
+
 def main():
     # Parse command line arguments.
     parser = argparse.ArgumentParser(description="Training script", allow_abbrev=False)
@@ -100,7 +111,7 @@ def main():
     global_step = 0
     model.train()
 
-    temp = [layer for layer in model.backbone.layers]
+    temp = [BlockPipe(b) for b in model.backbone.layers]
     print(len(temp), temp)
 
     # Define pipeline layers
