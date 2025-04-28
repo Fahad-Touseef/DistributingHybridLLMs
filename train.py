@@ -99,6 +99,8 @@ def main():
 
     # Define pipeline layers
     layers = [
+        # Add a lambda function to unpack input_ids from the tuple
+        lambda inputs: inputs[0],  # Unpack input_ids from (input_ids, labels)
         model.backbone.embedding,
         *list(model.backbone.layers),
         model.backbone.norm_f,
