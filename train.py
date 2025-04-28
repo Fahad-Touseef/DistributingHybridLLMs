@@ -100,7 +100,7 @@ def main():
     global_step = 0
     model.train()
 
-    temp = [layer.mixer for layer in model.backbone.layers]
+    temp = [layer for layer in model.backbone.layers]
     print(len(temp), temp)
 
     # Define pipeline layers
