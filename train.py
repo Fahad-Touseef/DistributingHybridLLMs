@@ -23,7 +23,13 @@ class ClassificationModel(nn.Module):
         self.backbone = backbone
         self.classifier = nn.Linear(d_model, num_classes)
 
-    def forward(self, input_ids):
+    def forward(self, inputs):
+        # Unpack input_ids from the tuple
+        if isinstance(inputs, tuple):
+            input_ids = inputs[0]
+        else:
+            input_ids = inputs
+
         outputs = self.backbone(input_ids=input_ids)
         pooled_output = outputs[:, 0, :]  # Use the [CLS] token representation
         logits = self.classifier(pooled_output)
