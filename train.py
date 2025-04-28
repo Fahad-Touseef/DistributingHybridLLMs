@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel, MambaConfig
 # from data import get_clm_dataloader
 from torch.nn import BCEWithLogitsLoss
-from data import get_imdb_dataloader
+from data import get_imdb_dataset
 from deepspeed import init_distributed
 from deepspeed.pipe import PipelineModule
 import torch.nn as nn
@@ -45,6 +45,7 @@ def main():
     init_distributed(dist_backend=args.backend)
 
     # Set the local rank and GPU device
+    print(args.local_rank, int(os.environ["LOCAL_RANK"]))
     args.local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(args.local_rank)
 
@@ -68,9 +69,8 @@ def main():
     #     seq_len=config.dataloader.seq_len,
     #     batch_size=config.dataloader.batch_size,
     # )
-    train_loader, vocab_size, pad_token_id = get_imdb_dataloader(
+    train_set, vocab_size, pad_token_id = get_imdb_dataset(
         seq_len=config.dataloader.seq_len,
-        batch_size=config.dataloader.batch_size,
     )
 
     # Create the MambaConfig
@@ -116,7 +116,7 @@ def main():
         args=args,
         model=pipeline_model,
         model_parameters=pipeline_model.parameters(),
-        training_data=train_loader
+        training_data=train_set
     )
 
     if model_engine.global_rank == 0:
