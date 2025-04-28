@@ -101,7 +101,8 @@ def main():
 
     # Define pipeline layers
     layers = [
-        model.backbone.embedding, 
+        model.backbone.embedding,
+        lambda x: x[0] if isinstance(x, tuple) else x,  # Ensure inputs are unpacked before the first block
         *list(model.backbone.layers),
         model.backbone.norm_f,
         lambda x: x[:, 0, :],  # Extract the [CLS] token representation
