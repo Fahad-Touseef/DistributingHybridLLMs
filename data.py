@@ -1,6 +1,6 @@
 from datasets import load_dataset
 from transformers import AutoTokenizer
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 def get_clm_dataloader(
     tokenizer_name="gpt2",
@@ -45,6 +45,19 @@ def get_clm_dataloader(
     lm_dataset.set_format(type="torch", columns=["input_ids", "labels"])
     return DataLoader(lm_dataset, batch_size=batch_size, shuffle=not streaming), len(tokenizer), tokenizer.pad_token_id
 
+class IMDBDataset(Dataset):
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+        input_ids = item["input_ids"]
+        labels = item["labels"]
+        return input_ids, labels
+
 def get_imdb_dataset(
     tokenizer_name="bert-base-uncased",
     seq_len=512,
@@ -72,7 +85,7 @@ def get_imdb_dataset(
 
     tokenized_dataset = dataset.map(tokenize, batched=True, remove_columns=["text"])
     tokenized_dataset = tokenized_dataset.rename_column("label", "labels")
-    tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+    tokenized_dataset.set_format(type="torch", columns=["input_ids", "labels"])
 
     print(len(tokenizer), tokenizer.vocab_size) 
-    return tokenized_dataset, len(tokenizer), tokenizer.pad_token_id
+    return IMDBDataset(tokenized_dataset), len(tokenizer), tokenizer.pad_token_id
