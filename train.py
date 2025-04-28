@@ -87,8 +87,8 @@ def main():
     #     batch_size=config.dataloader.batch_size,
     # )
     train_set, vocab_size, pad_token_id = get_imdb_dataset(
-        seq_len=config.dataloader.seq_len,
-    )
+        seq_len=config.dataloader.seq_len, batch_size = config.dataloader.batch_size,
+    )   # Note that config.dataloader.batch_size should match the "train_micro_batch_size_per_gpu" in deepspeed config
 
     # Create the MambaConfig
     mamba_config = MambaConfig(

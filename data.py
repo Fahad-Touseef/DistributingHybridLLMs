@@ -61,6 +61,7 @@ class IMDBDataset(Dataset):
 def get_imdb_dataset(
     tokenizer_name="bert-base-uncased",
     seq_len=512,
+    batch_size=64,
     streaming=False,
 ):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -73,7 +74,9 @@ def get_imdb_dataset(
             tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     dataset = load_dataset("imdb", split="train", streaming=streaming)
-    dataset = dataset.select(range(1024))  # For testing.
+    total = len(dataset)
+    sel = (total // batch_size) * batch_size
+    dataset = dataset.select(range(sel))
 
     def tokenize(example):
         return tokenizer(

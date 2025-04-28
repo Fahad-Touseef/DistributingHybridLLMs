@@ -20,12 +20,12 @@ dataloader:
     dataset_name: "wikitext"
     dataset_config: "wikitext-103-v1"
     seq_len: 512  # 1024
-    batch_size: 4
+    batch_size: 64
 
 training:
     learning_rate: 0.0001
     # save_every_steps: 10000     (Not being used right now i.e. rn only final model is saved)
-    train_steps: 500001
+    train_steps: 600
     epochs: 10  
     out_dir: "./models"
 
@@ -33,4 +33,4 @@ wandb:
     project: "mambaformer_training"
     entity: "fahad15-university-of-wisconsin-madison"
     notes: "Distributing training of mambaformer"
-    log_every_steps: 50 #10000
+    log_every_steps: 5 #10000
