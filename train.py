@@ -58,8 +58,6 @@ def main():
     # Load training configuration.
     config = OmegaConf.load(args.config)
 
-    print(args)
-
     # Initialize WandB for logging.
     if args.local_rank in (0, -1):
         wandb.init(
@@ -124,20 +122,13 @@ def main():
         partition_method="parameters"
     )
 
-    # Define DeepSpeed configuration
-    deepspeed_config = {
-        "steps_per_print": 5,
-        # Add other configurations if needed
-    }
-
     # Update the DeepSpeed initialization to include the configuration
     model_engine, optimizer, _, _ = deepspeed.initialize(
         args=args,
         model=pipeline_model,
         model_parameters=pipeline_model.parameters(),
-        training_data=train_set,
-        config_params=deepspeed_config  # Pass the configuration here
-    )
+        training_data=train_set
+        )
 
     if model_engine.global_rank == 0:
         print(mamba_config)
