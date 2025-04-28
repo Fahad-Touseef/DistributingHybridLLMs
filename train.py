@@ -133,7 +133,7 @@ def main():
     if model_engine.global_rank == 0:
         print(mamba_config)
         print(pipeline_model)
-        print(training_dataloader.batch_size)
+        print(training_dataloader.loader.batch_size)
 
     # Training loop
     for step in range(config.training.train_steps):
