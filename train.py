@@ -13,7 +13,7 @@ from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel, MambaConfig
 # from data import get_clm_dataloader
 from torch.nn import BCEWithLogitsLoss
 from data import get_imdb_dataloader
-
+from deepspeed import init_distributed
 from deepspeed.pipe import PipelineModule
 import torch.nn as nn
 
@@ -34,11 +34,19 @@ def main():
     parser = argparse.ArgumentParser(description="Training script", allow_abbrev=False)
     parser.add_argument("--config", type=str, default="conf.yaml", help="Path to training config YAML")
     parser.add_argument("--local_rank", type=int, default=-1, help="Local rank passed by deepspeed launcher")
+    parser.add_argument("--backend", type=str, default="nccl", help="Distributed backend")
 
     # This adds DeepSpeed's arguments (including --deepspeed_config)
     deepspeed.add_config_arguments(parser)
 
     args = parser.parse_args()
+
+    # Initialize the distributed backend
+    init_distributed(dist_backend=args.backend)
+
+    # Set the local rank and GPU device
+    args.local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(args.local_rank)
 
     # Load training configuration.
     config = OmegaConf.load(args.config)
@@ -67,14 +75,14 @@ def main():
 
     # Create the MambaConfig
     mamba_config = MambaConfig(
-                                d_model=config.model.n_embd,
-                                n_layer=config.model.n_layer,
-                                vocab_size = vocab_size,
-                                ssm_cfg=config.model.ssm_cfg,
-                                attn_layer_idx=config.model.attn_layer_idx,
-                                attn_cfg=config.model.attn_cfg,
-                            )
-    
+        d_model=config.model.n_embd,
+        n_layer=config.model.n_layer,
+        vocab_size=vocab_size,
+        ssm_cfg=config.model.ssm_cfg,
+        attn_layer_idx=config.model.attn_layer_idx,
+        attn_cfg=config.model.attn_cfg,
+        )
+       
     # Build the hybrid model
     base_model = MambaLMHeadModel(mamba_config)
     model = ClassificationModel(base_model.backbone, d_model=config.model.n_embd)
@@ -97,18 +105,18 @@ def main():
         return loss
 
     pipeline_model = PipelineModule(
-                                    layers=layers,       
-                                    loss_fn=loss_fn,            
-                                    num_stages=4,           
-                                    partition_method='parameters'
-                                    )
+        layers=layers,
+        loss_fn=loss_fn,
+        num_stages=4,
+        partition_method="parameters"
+    )
 
     # Initialize DeepSpeed with your model, optimizer, and config.
     model_engine, optimizer, _, _ = deepspeed.initialize(
-    args=args,
-    model=pipeline_model,
-    model_parameters=pipeline_model.parameters(),
-    training_data=train_loader
+        args=args,
+        model=pipeline_model,
+        model_parameters=pipeline_model.parameters(),
+        training_data=train_loader
     )
 
     if model_engine.global_rank == 0:
@@ -185,5 +193,5 @@ def main():
         # model.save_pretrained(config.training.out_dir)
         # print(f"Model checkpoint saved to {config.training.out_dir}")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
