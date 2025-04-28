@@ -46,8 +46,6 @@ def main():
     deepspeed.add_config_arguments(parser)
 
     args = parser.parse_args()
-    print(args)
-    exit(1)
 
     # Initialize the distributed backend
     init_distributed(dist_backend=args.backend)
@@ -59,6 +57,8 @@ def main():
 
     # Load training configuration.
     config = OmegaConf.load(args.config)
+
+    print(args)
 
     # Initialize WandB for logging.
     if args.local_rank in (0, -1):
