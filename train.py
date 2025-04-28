@@ -123,7 +123,7 @@ def main():
     )
 
     # Update the DeepSpeed initialization to include the configuration
-    model_engine, optimizer, _, _ = deepspeed.initialize(
+    model_engine, optimizer, training_dataloader, _ = deepspeed.initialize(
         args=args,
         model=pipeline_model,
         model_parameters=pipeline_model.parameters(),
@@ -133,6 +133,7 @@ def main():
     if model_engine.global_rank == 0:
         print(mamba_config)
         print(pipeline_model)
+        print(training_dataloader.batch_size)
 
     # Training loop
     for step in range(config.training.train_steps):
