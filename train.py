@@ -87,6 +87,8 @@ def main():
         ssm_cfg=config.model.ssm_cfg,
         attn_layer_idx=config.model.attn_layer_idx,
         attn_cfg=config.model.attn_cfg,
+        rms_norm = False,
+        fused_add_norm = False
         )
        
     # Build the hybrid model
