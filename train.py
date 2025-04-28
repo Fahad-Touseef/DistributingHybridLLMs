@@ -86,7 +86,10 @@ def main():
         vocab_size=vocab_size,
         ssm_cfg=config.model.ssm_cfg,
         attn_layer_idx=config.model.attn_layer_idx,
-        attn_cfg=config.model.attn_cfg
+        attn_cfg=config.model.attn_cfg,
+        rms_norm=True,
+        fused_add_norm=False,        # <-- turn OFF the fused kernel
+        residual_in_fp32=False,        # optional, but keep norm + residual in same dtype
         )
        
     # Build the hybrid model
