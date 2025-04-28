@@ -86,9 +86,7 @@ def main():
         vocab_size=vocab_size,
         ssm_cfg=config.model.ssm_cfg,
         attn_layer_idx=config.model.attn_layer_idx,
-        attn_cfg=config.model.attn_cfg,
-        rms_norm = False,
-        fused_add_norm = False
+        attn_cfg=config.model.attn_cfg
         )
        
     # Build the hybrid model
@@ -99,12 +97,15 @@ def main():
     global_step = 0
     model.train()
 
+    temp = [layer.mixer for layer in model.backbone.layers]
+    print(len(temp), temp)
+
     # Define pipeline layers
     layers = [
         model.backbone.embedding,
-        lambda x: x[0] if isinstance(x, tuple) else x,  # Ensure inputs are unpacked before the first block
-        *list(model.backbone.layers),
-        model.backbone.norm_f,
+        # lambda x: x[0] if isinstance(x, tuple) else x,  # Ensure inputs are unpacked before the first block
+        *temp,
+        # model.backbone.norm_f,
         lambda x: x[:, 0, :],  # Extract the [CLS] token representation
         model.classifier
     ]
