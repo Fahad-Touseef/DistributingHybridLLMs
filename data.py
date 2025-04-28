@@ -52,10 +52,16 @@ def get_imdb_dataloader(
     streaming=False,
 ):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    tokenizer.pad_token = tokenizer.eos_token
+
+    # Ensure the tokenizer has a padding token
+    if tokenizer.pad_token is None:
+        if tokenizer.eos_token is not None:
+            tokenizer.pad_token = tokenizer.eos_token
+        else:
+            tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     dataset = load_dataset("imdb", split="train", streaming=streaming)
-    dataset = dataset.select(range(100))  # Use only the first 100 samples for testing.
+    dataset = dataset.select(range(300))  # Use only the first 300 samples for testing.
 
     def tokenize(example):
         return tokenizer(
@@ -69,4 +75,5 @@ def get_imdb_dataloader(
     tokenized_dataset = tokenized_dataset.rename_column("label", "labels")
     tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
+    print(len(tokenizer), tokenizer.vocab_size) 
     return DataLoader(tokenized_dataset, batch_size=batch_size, shuffle=not streaming), len(tokenizer), tokenizer.pad_token_id
