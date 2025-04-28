@@ -10,7 +10,24 @@ import torch.nn.functional as F
 
 # from model import MambaMixerModel  
 from mamba_ssm.models.mixer_seq_simple import MambaLMHeadModel, MambaConfig
-from data import get_clm_dataloader
+# from data import get_clm_dataloader
+from torch.nn import BCEWithLogitsLoss
+from data import get_imdb_dataloader
+
+from deepspeed.pipe import PipelineModule
+import torch.nn as nn
+
+class ClassificationModel(nn.Module):
+    def __init__(self, backbone, d_model, num_classes=2):
+        super().__init__()
+        self.backbone = backbone
+        self.classifier = nn.Linear(d_model, num_classes)
+
+    def forward(self, input_ids):
+        outputs = self.backbone(input_ids=input_ids)
+        pooled_output = outputs[:, 0, :]  # Use the [CLS] token representation
+        logits = self.classifier(pooled_output)
+        return logits
 
 def main():
     # Parse command line arguments.
@@ -36,39 +53,74 @@ def main():
         )
 
     # Setup the data loader using configuration.
-    train_loader, vocab_size, pad_token_id = get_clm_dataloader(
-        tokenizer_name=config.dataloader.tokenizer_name,
-        dataset_name=config.dataloader.dataset_name,
-        dataset_config=config.dataloader.dataset_config,
+    # train_loader, vocab_size, pad_token_id = get_clm_dataloader(
+    #     tokenizer_name=config.dataloader.tokenizer_name,
+    #     dataset_name=config.dataloader.dataset_name,
+    #     dataset_config=config.dataloader.dataset_config,
+    #     seq_len=config.dataloader.seq_len,
+    #     batch_size=config.dataloader.batch_size,
+    # )
+    train_loader, vocab_size, pad_token_id = get_imdb_dataloader(
         seq_len=config.dataloader.seq_len,
         batch_size=config.dataloader.batch_size,
     )
 
     # Create the MambaConfig
     mamba_config = MambaConfig(
-                                d_model = config.model.n_embd,
-                                n_layer = config.model.n_layer,
+                                d_model=config.model.n_embd,
+                                n_layer=config.model.n_layer,
                                 vocab_size = vocab_size,
-                                ssm_cfg=config.model.ssm_cfg,  # Pass ssm_cfg from the configuration
-                                attn_layer_idx=config.model.attn_layer_idx,  # Pass attn_layer_idx from the configuration
-                                attn_cfg=config.model.attn_cfg,  # Pass attn_cfg from the configuration
+                                ssm_cfg=config.model.ssm_cfg,
+                                attn_layer_idx=config.model.attn_layer_idx,
+                                attn_cfg=config.model.attn_cfg,
                             )
     
-    # Build the hybrid model using MambaLMHeadModel
-    model = MambaLMHeadModel(mamba_config)
+    # Build the hybrid model
+    base_model = MambaLMHeadModel(mamba_config)
+    model = ClassificationModel(base_model.backbone, d_model=config.model.n_embd)
+
+    # Brought above after adding pipelining
+    global_step = 0
+    model.train()
+
+    # Define pipeline layers
+    layers = [
+        model.backbone.embedding,
+        *list(model.backbone.layers),
+        model.backbone.norm_f,
+        model.classifier
+    ]
+
+    # Define custom loss function
+    def loss_fn(outputs, labels):
+        loss = BCEWithLogitsLoss()(outputs.squeeze(-1), labels.float())
+        return loss
+
+    pipeline_model = PipelineModule(
+                                    layers=layers,       
+                                    loss_fn=loss_fn,            
+                                    num_stages=4,           
+                                    partition_method='parameters'
+                                    )
 
     # Initialize DeepSpeed with your model, optimizer, and config.
     model_engine, optimizer, _, _ = deepspeed.initialize(
-    args = args,
-    model=model,
-    model_parameters=model.parameters())
+    args=args,
+    model=pipeline_model,
+    model_parameters=pipeline_model.parameters(),
+    training_data=train_loader
+    )
 
     if model_engine.global_rank == 0:
         print(mamba_config)
-        print(model)
+        print(pipeline_model)
 
-    global_step = 0
-    model.train()
+    # Training loop
+    for step in range(config.training.train_steps):
+        loss = model_engine.train_batch()
+        if model_engine.global_rank == 0 and step % config.wandb.log_every_steps == 0:
+            wandb.log({"loss": loss.item(), "step": step})
+            print(f"Step {step}: Loss {loss.item()}")
 
     # # Set up the PyTorch profiler.
     # profiler = profile(
@@ -81,45 +133,45 @@ def main():
     # profiler.start()
 
     # Training loop.
-    for epoch in range(config.training.epochs): 
-        for batch in train_loader:
-            input_ids = batch["input_ids"].to(model_engine.device)
-            labels = batch["labels"].to(model_engine.device)
+    # for epoch in range(config.training.epochs): 
+    #     for batch in train_loader:
+    #         input_ids = batch["input_ids"].to(model_engine.device)
+    #         labels = batch["labels"].to(model_engine.device)
 
-            output = model_engine(input_ids=input_ids)  
-            logits = output.logits  # shape: (B, T, V)
+    #         output = model_engine(input_ids=input_ids)  
+    #         logits = output.logits  # shape: (B, T, V)
 
-            loss = F.cross_entropy(
-                logits[:, :-1, :].reshape(-1, logits.size(-1)),
-                labels[:, 1:].reshape(-1),
-                ignore_index=pad_token_id
-            )
-            print(loss.item())
+    #         loss = F.cross_entropy(
+    #             logits[:, :-1, :].reshape(-1, logits.size(-1)),
+    #             labels[:, 1:].reshape(-1),
+    #             ignore_index=pad_token_id
+    #         )
+    #         print(loss.item())
 
-            # Backward pass and optimization
-            model_engine.backward(loss)  # Backward pass via DeepSpeed.
-            model_engine.step()          # Update model parameters.
+    #         # Backward pass and optimization
+    #         model_engine.backward(loss)  # Backward pass via DeepSpeed.
+    #         model_engine.step()          # Update model parameters.
 
-            global_step += 1
+    #         global_step += 1
 
-            # Logging
-            if model_engine.global_rank == 0:
-                if global_step % config.wandb.log_every_steps == 0:
-                    wandb.log({
-                        "loss": loss.item(),
-                        "step": global_step,
-                        "lr": optimizer.param_groups[0]['lr'],
-                    })
-                    print(f"Step {global_step}: Loss {loss.item()}")
+    #         # Logging
+    #         if model_engine.global_rank == 0:
+    #             if global_step % config.wandb.log_every_steps == 0:
+    #                 wandb.log({
+    #                     "loss": loss.item(),
+    #                     "step": global_step,
+    #                     "lr": optimizer.param_groups[0]['lr'],
+    #                 })
+    #                 print(f"Step {global_step}: Loss {loss.item()}")
 
-            # # Step profiler (only from rank 0)
-            # if model_engine.global_rank == 0 and not model_engine.optimizer_overflow:
-            #     profiler.step()
+    #         # # Step profiler (only from rank 0)
+    #         # if model_engine.global_rank == 0 and not model_engine.optimizer_overflow:
+    #         #     profiler.step()
 
-            if global_step >= config.training.train_steps:
-                break
-        if global_step >= config.training.train_steps:
-            break
+    #         if global_step >= config.training.train_steps:
+    #             break
+    #     if global_step >= config.training.train_steps:
+    #         break
 
     # if model_engine.global_rank == 0:
     #     profiler.stop()
@@ -130,8 +182,8 @@ def main():
     # Save the final model checkpoint.
     if model_engine.global_rank == 0:
         wandb.finish()
-        model.save_pretrained(config.training.out_dir)
-        print(f"Model checkpoint saved to {config.training.out_dir}")
+        # model.save_pretrained(config.training.out_dir)
+        # print(f"Model checkpoint saved to {config.training.out_dir}")
 
 if __name__ == '__main__':
     main()

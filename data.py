@@ -44,3 +44,29 @@ def get_clm_dataloader(
     print(len(tokenizer), tokenizer.vocab_size) 
     lm_dataset.set_format(type="torch", columns=["input_ids", "labels"])
     return DataLoader(lm_dataset, batch_size=batch_size, shuffle=not streaming), len(tokenizer), tokenizer.pad_token_id
+
+def get_imdb_dataloader(
+    tokenizer_name="bert-base-uncased",
+    seq_len=512,
+    batch_size=4,
+    streaming=False,
+):
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    dataset = load_dataset("imdb", split="train", streaming=streaming)
+    dataset = dataset.select(range(100))  # Use only the first 100 samples for testing.
+
+    def tokenize(example):
+        return tokenizer(
+            example["text"],
+            truncation=True,
+            max_length=seq_len,
+            padding="max_length"
+        )
+
+    tokenized_dataset = dataset.map(tokenize, batched=True, remove_columns=["text"])
+    tokenized_dataset = tokenized_dataset.rename_column("label", "labels")
+    tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
+    return DataLoader(tokenized_dataset, batch_size=batch_size, shuffle=not streaming), len(tokenizer), tokenizer.pad_token_id

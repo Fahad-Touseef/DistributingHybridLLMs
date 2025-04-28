@@ -14,10 +14,10 @@
     "enabled": true        
   },
   "zero_optimization": {
-    "stage": 1                      
+    "stage": 1                    
   },
   "pipeline": {
-    "stages": 2
+    "stages": 4
   },
   "flops_profiler": {
     "enabled": true,
