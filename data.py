@@ -73,7 +73,7 @@ def get_imdb_dataset(
             tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     dataset = load_dataset("imdb", split="train", streaming=streaming)
-    dataset = dataset.select(range(1000))  # For testing.
+    dataset = dataset.select(range(1024))  # For testing.
 
     def tokenize(example):
         return tokenizer(
