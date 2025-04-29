@@ -71,89 +71,11 @@ def get_args():
     args = parser.parse_args()
     return args
 
-class DummyTextDataset(torch.utils.data.Dataset):
-    def __init__(self, tokenizer, seq_length, size=10000, num_classes=2):
-        self.tokenizer = tokenizer
-        self.seq_length = seq_length
-        self.size = size
-        self.num_classes = num_classes
-        self.vocab_size = len(tokenizer.vocab)
-        
-    def __len__(self):
-        return self.size
-        
-    def __getitem__(self, idx):
-        # Generate random token ids
-        input_ids = torch.randint(1, self.vocab_size, (self.seq_length,))
-        label = torch.randint(0, self.num_classes, (1,)).item()
-        return (input_ids, label)
 
-class PipelineCompatibleDataset(IterableDataset):
-    def __init__(self, dataset):
-        self.dataset = dataset
-        
-    def __iter__(self):
-        for batch in self.dataset:
-            # Convert dict of tensors to a list of inputs for pipeline
-            # For most transformer models, we need [input_ids, attention_mask, labels]
-            yield [(batch["input_ids"], batch["attention_mask"]), batch["labels"]]
 
-class JambaPipelineWrapper(torch.nn.Module):
-    """
-    Wrapper class for Jamba layers to adapt them for DeepSpeed pipeline parallelism
-    """
-    def __init__(self, layer_type, layer_name, model):
-        super().__init__()
-        self.layer_type = layer_type
-        self.layer_name = layer_name
-        
-        # Get the actual layer from the model using layer_name as a path
-        parts = layer_name.split('.')
-        curr_module = model
-        for part in parts:
-            if part.isdigit():
-                curr_module = curr_module[int(part)]
-            else:
-                curr_module = getattr(curr_module, part)
-        
-        self.layer = curr_module
-        
-    def forward(self, inputs):
-        if self.layer_type == "embed":
-            mask, input = inputs
-            return self.layer(inputs)
-        elif self.layer_type == "mamba_layer" or self.layer_type == "attention_layer":
-            return self.layer(inputs)
-        elif self.layer_type == "layernorm":
-            return self.layer(inputs)
-        elif self.layer_type == "head":
-            # For the classification head
-            sequence_output = inputs
-            pooled_output = sequence_output[:, -1]  # Use last token
-            return self.layer(pooled_output)
-        else:
-            raise ValueError(f"Unsupported layer type: {self.layer_type}")
 
-def create_pipeline_specs(model):
-    """Create layer specs for pipeline parallelism based on model architecture"""
-    specs = [
-        {"tied": None, "type": "embed", "name": "model.embed_tokens"},
-    ]
-    
-    # Add layer specs for each layer
-    for i in range(len(model.model.layers)):
-        if isinstance(model.model.layers[i], JambaMambaDecoderLayer):
-            specs.append({"tied": None, "type": "mamba_layer", "name": f"model.layers.{i}"})
-        elif isinstance(model.model.layers[i], JambaAttentionDecoderLayer):
-            specs.append({"tied": None, "type": "attention_layer", "name": f"model.layers.{i}"})
-        else:
-            specs.append({"tied": None, "type": "layer", "name": f"model.layers.{i}"})
-    
-    # Add final layernorm and classification head
-    specs.append({"tied": None, "type": "layernorm", "name": "model.final_layernorm"})
-    specs.append({"tied": None, "type": "head", "name": "score"})
-    
-    return specs
+
+
 # one possiblity for passing the data as input 
 class JambaPipelineModule(JambaForSequenceClassification):
     def forward(self, inputs):
@@ -163,65 +85,6 @@ class JambaPipelineModule(JambaForSequenceClassification):
 
 
 
-def join_jamba_layers(jamba_model):
-    '''
-    layer partitioning for pipeline parallelism
-    '''
-    print("join init layer", jamba_model)
-    layers = []
-
-    # Embedding layer first
-    layers.append(jamba_model.model.embed_tokens)
-
-    # Then the transformer/mamba decoder layers
-    for layer in jamba_model.model.layers:
-        layers.append(layer)
-
-    # Final normalization
-    layers.append(jamba_model.model.final_layernorm)
-
-    # Final classification head (score projection)
-    layers.append(jamba_model.score)
-
-    return layers
-
-def create_pipeline_model(model, specs, args):
-    """Create a PipelineModule from model and specs"""
-    layers = []
-    
-    for spec in specs:
-        layer_type = spec["type"]
-        layer_name = spec["name"]
-        
-        # Create a wrapper for each layer
-        layer = JambaPipelineWrapper(layer_type, layer_name, model)
-        layers.append(layer)
-    
-    # Create PipelineModule
-    pipe_model = PipelineModule(
-        layers=layers,
-        loss_fn=torch.nn.CrossEntropyLoss(),
-        num_stages=args.pipeline_parallel_size,
-        partition_method='parameters',
-        # partition_method='uniform',
-        activation_checkpoint_interval=0
-    )
-    return pipe_model
-
-def dummy_trainset(local_rank, dl_path='/tmp/cifar10-data'):
-    # Ensure only one rank downloads.
-    # Note: if the download path is not on a shared filesytem, remove the semaphore
-    # and switch to args.local_rank
-    dist.barrier()
-    if local_rank != 0:
-        dist.barrier()
-    trainset = DummyTextDataset(
-        tokenizer=AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b"),
-        seq_length=512)
-    if local_rank == 0:
-        dist.barrier()
-    return trainset
-
 class BlockPipe(nn.Module):
     """Wrap a Block so it only propagates `hidden_states` onward."""
     def __init__(self, block: nn.Module):
@@ -230,7 +93,17 @@ class BlockPipe(nn.Module):
 
     def forward(self, x):
         # block(x) returns (hidden_states, residual)
-        hidden_states = self.block(x)
+        if isinstance(x, torch.Tensor) and not x.requires_grad and self.training:
+            x.requires_grad_(True)
+            
+        output = self.block(x)
+        
+        # Ensure output has proper gradient connection
+        if isinstance(output, tuple):
+            hidden_states = output[0]
+        else:
+            hidden_states = output
+            
         return hidden_states
     
 class SelectCLS(nn.Module):
@@ -279,7 +152,6 @@ def train_pipeline_jamba(args):
     # specs = create_pipeline_specs(model)
     # print("Pipeline specs============", specs)
     temp = [BlockPipe(b) for b in model.model.layers]
-    print(model)
     layers = [
         model.model.embed_tokens,
         *temp,
@@ -290,12 +162,18 @@ def train_pipeline_jamba(args):
     # Create pipeline model
     #pipe_model = create_pipeline_model(model, specs, args)
     def loss_fn(outputs, labels):
-        print(outputs.shape, labels.shape)
+       # Debug prints
+        print(f"outputs {outputs.shape}")
+        print(f"outputs.requires_grad: {outputs.requires_grad}")
+        print(f"outputs has grad_fn: {outputs.grad_fn is not None}")
+        print(f"labels.requires_grad: {labels.requires_grad}")
+        outputs = outputs.requires_grad_(True)
         loss = nn.CrossEntropyLoss()(outputs, labels)
         return loss
+    
     pipe_model = PipelineModule(
         layers=layers,
-        loss_fn=nn.CrossEntropyLoss(),
+        loss_fn=loss_fn,
         num_stages=args.pipeline_parallel_size,
         partition_method='parameters',
         # partition_method='uniform',
@@ -304,41 +182,13 @@ def train_pipeline_jamba(args):
 
     print("Pipeline model============", pipe_model)
     
-    # Create dataset
-    # trainset = DummyTextDataset(
-    #     tokenizer=tokenizer,
-    #     seq_length=args.seq_length
-    # )
-
-    #trainset = cifar_trainset(args.local_rank)
-    # Create repeating loader
-    # tokenizer = AutoTokenizer.from_pretrained("ai21labs/Jamba-v0.1")
-    # imdb = load_dataset("imdb")
-
-    # def preprocess_function(examples):
-    #     return tokenizer(examples["text"], truncation=True, max_length=700, padding="max_length")
-
-    # tokenized_imdb = imdb.map(preprocess_function, batched=True)
-    # tokenized_imdb = tokenized_imdb.remove_columns(["text"])
-    # tokenized_imdb.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
-
-    # data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, max_length=700)
-
-    
-
-    # train_dataloader = DataLoader(
-    #     tokenized_imdb["train"],
-    #     shuffle=True,
-    #     batch_size=16,
-    #     collate_fn=data_collator
-    # )
-
-    # pipeline_dataset = PipelineCompatibleDataset(train_dataloader)
-    # train_iter = deepspeed.utils.RepeatingLoader(pipeline_dataset)
 
     train_set, vocab_size, pad_token_id = get_imdb_dataset(
-        seq_len=512, batch_size = 64,
+        seq_len=512, batch_size = 32,
     ) 
+
+    for param in pipe_model.parameters():
+        param.requires_grad = True
     
     # Initialize DeepSpeed
     engine, _, _, _ = deepspeed.initialize(
