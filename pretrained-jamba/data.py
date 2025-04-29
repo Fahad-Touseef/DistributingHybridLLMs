@@ -57,7 +57,7 @@ class IMDBDataset(Dataset):
         input_ids = item["input_ids"]
         attention_mask = item["attention_mask"]
         labels = item["labels"]
-        return input_ids, attention_mask, labels
+        return input_ids, labels
 
 def get_imdb_dataset(
     tokenizer_name="bert-base-uncased",

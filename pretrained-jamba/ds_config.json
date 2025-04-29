@@ -1,7 +1,5 @@
 {
-  "train_batch_size" : 16,
-  "train_micro_batch_size_per_gpu" : 8,
-
+  "train_micro_batch_size_per_gpu" : 32,
    "optimizer": {
     "type": "Adam",
     "params": {
@@ -14,15 +12,16 @@
     }
   },
   "pipeline": {
+    "stages":4,
     "activation_checkpoint_interval": 1,
-    "pipeline_parallel_size": 2,
+   
     "optimize": "memory"
   },
-  
-  
+  "zero_optimization": {
+    "stage": 1
+  },
   "steps_per_print" : 10,
   "wall_clock_breakdown" : false,
-
   "world_size":2,
   "gradient_accumulation_steps" : 1
  }

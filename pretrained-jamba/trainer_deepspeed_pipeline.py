@@ -232,6 +232,10 @@ class BlockPipe(nn.Module):
         # block(x) returns (hidden_states, residual)
         hidden_states = self.block(x)
         return hidden_states
+    
+class SelectCLS(nn.Module):
+    def forward(self, x):
+        return x[:, 0, :]
 
 
 def train_pipeline_jamba(args):
@@ -260,6 +264,7 @@ def train_pipeline_jamba(args):
         "mamba_d_state": 16,
         "mamba_d_conv": 4,
         "mamba_expand": 2,
+        "output_router_logits":False,
     }
     
     # Create model configuration
@@ -273,21 +278,24 @@ def train_pipeline_jamba(args):
     # Create specs for pipeline parallelism
     # specs = create_pipeline_specs(model)
     # print("Pipeline specs============", specs)
-    temp = [ BlockPipe(b) for b in model.model.layers]
+    temp = [BlockPipe(b) for b in model.model.layers]
     print(model)
     layers = [
         model.model.embed_tokens,
         *temp,
         model.model.final_layernorm,
-        model.score
+        model.score,
+        SelectCLS()
     ]
     # Create pipeline model
     #pipe_model = create_pipeline_model(model, specs, args)
     def loss_fn(outputs, labels):
-        loss = nn.BCEWithLogitsLoss()(outputs.squeeze(-1), labels.float())
+        print(outputs.shape, labels.shape)
+        loss = nn.CrossEntropyLoss()(outputs, labels)
         return loss
     pipe_model = PipelineModule(
         layers=layers,
+        loss_fn=nn.CrossEntropyLoss(),
         num_stages=args.pipeline_parallel_size,
         partition_method='parameters',
         # partition_method='uniform',
@@ -304,29 +312,29 @@ def train_pipeline_jamba(args):
 
     #trainset = cifar_trainset(args.local_rank)
     # Create repeating loader
-    tokenizer = AutoTokenizer.from_pretrained("ai21labs/Jamba-v0.1")
-    imdb = load_dataset("imdb")
+    # tokenizer = AutoTokenizer.from_pretrained("ai21labs/Jamba-v0.1")
+    # imdb = load_dataset("imdb")
 
-    def preprocess_function(examples):
-        return tokenizer(examples["text"], truncation=True, max_length=700, padding="max_length")
+    # def preprocess_function(examples):
+    #     return tokenizer(examples["text"], truncation=True, max_length=700, padding="max_length")
 
-    tokenized_imdb = imdb.map(preprocess_function, batched=True)
-    tokenized_imdb = tokenized_imdb.remove_columns(["text"])
-    tokenized_imdb.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
+    # tokenized_imdb = imdb.map(preprocess_function, batched=True)
+    # tokenized_imdb = tokenized_imdb.remove_columns(["text"])
+    # tokenized_imdb.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
 
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, max_length=700)
+    # data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, max_length=700)
 
     
 
-    train_dataloader = DataLoader(
-        tokenized_imdb["train"],
-        shuffle=True,
-        batch_size=16,
-        collate_fn=data_collator
-    )
+    # train_dataloader = DataLoader(
+    #     tokenized_imdb["train"],
+    #     shuffle=True,
+    #     batch_size=16,
+    #     collate_fn=data_collator
+    # )
 
-    pipeline_dataset = PipelineCompatibleDataset(train_dataloader)
-    train_iter = deepspeed.utils.RepeatingLoader(pipeline_dataset)
+    # pipeline_dataset = PipelineCompatibleDataset(train_dataloader)
+    # train_iter = deepspeed.utils.RepeatingLoader(pipeline_dataset)
 
     train_set, vocab_size, pad_token_id = get_imdb_dataset(
         seq_len=512, batch_size = 64,
@@ -338,7 +346,6 @@ def train_pipeline_jamba(args):
         model=pipe_model,
         model_parameters=[p for p in pipe_model.parameters() if p.requires_grad],
         training_data=train_set,
-
     )
     
     # Print pipeline configuration
