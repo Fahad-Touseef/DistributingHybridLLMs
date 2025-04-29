@@ -23,6 +23,8 @@ import torchvision
 from torchvision import transforms
 import os
 from torch.utils.data import IterableDataset
+from data import get_imdb_dataset
+
 
 
 def get_args():
@@ -86,11 +88,6 @@ class DummyTextDataset(torch.utils.data.Dataset):
         label = torch.randint(0, self.num_classes, (1,)).item()
         return (input_ids, label)
 
-def collate_fn(batch):
-    input_ids = torch.stack([item['input_ids'] for item in batch])
-    labels = torch.tensor([item['labels'] for item in batch])
-    return input_ids, labels
-
 class PipelineCompatibleDataset(IterableDataset):
     def __init__(self, dataset):
         self.dataset = dataset
@@ -99,7 +96,7 @@ class PipelineCompatibleDataset(IterableDataset):
         for batch in self.dataset:
             # Convert dict of tensors to a list of inputs for pipeline
             # For most transformer models, we need [input_ids, attention_mask, labels]
-            yield [batch["input_ids"], batch["attention_mask"], batch["labels"]]
+            yield [(batch["input_ids"], batch["attention_mask"]), batch["labels"]]
 
 class JambaPipelineWrapper(torch.nn.Module):
     """
@@ -163,7 +160,8 @@ class JambaPipelineModule(JambaForSequenceClassification):
         hidden, mask = inputs
         output = super().forward(hidden, mask)
         return output
-    
+
+
 
 def join_jamba_layers(jamba_model):
     '''
@@ -208,7 +206,6 @@ def create_pipeline_model(model, specs, args):
         # partition_method='uniform',
         activation_checkpoint_interval=0
     )
-    
     return pipe_model
 
 def dummy_trainset(local_rank, dl_path='/tmp/cifar10-data'):
@@ -224,6 +221,18 @@ def dummy_trainset(local_rank, dl_path='/tmp/cifar10-data'):
     if local_rank == 0:
         dist.barrier()
     return trainset
+
+class BlockPipe(nn.Module):
+    """Wrap a Block so it only propagates `hidden_states` onward."""
+    def __init__(self, block: nn.Module):
+        super().__init__()
+        self.block = block
+
+    def forward(self, x):
+        # block(x) returns (hidden_states, residual)
+        hidden_states = self.block(x)
+        return hidden_states
+
 
 def train_pipeline_jamba(args):
     torch.manual_seed(args.seed)
@@ -255,24 +264,30 @@ def train_pipeline_jamba(args):
     
     # Create model configuration
     jambaconfig = JambaConfig(**jamba_config)
-    
-    
 
-   
     # Create base model (not for training, just for extracting structure)
     model = JambaForSequenceClassification(jambaconfig)
    
-    jamabalayers = join_jamba_layers(model)
-    print("Jamba layers============", jamabalayers)
+    #jamabalayers = join_jamba_layers(model)
+    #print("Jamba layers============", jamabalayers)
     # Create specs for pipeline parallelism
     # specs = create_pipeline_specs(model)
     # print("Pipeline specs============", specs)
-    
+    temp = [ BlockPipe(b) for b in model.model.layers]
+    print(model)
+    layers = [
+        model.model.embed_tokens,
+        *temp,
+        model.model.final_layernorm,
+        model.score
+    ]
     # Create pipeline model
     #pipe_model = create_pipeline_model(model, specs, args)
+    def loss_fn(outputs, labels):
+        loss = nn.BCEWithLogitsLoss()(outputs.squeeze(-1), labels.float())
+        return loss
     pipe_model = PipelineModule(
-        layers=jamabalayers,
-        loss_fn=torch.nn.CrossEntropyLoss(),
+        layers=layers,
         num_stages=args.pipeline_parallel_size,
         partition_method='parameters',
         # partition_method='uniform',
@@ -301,7 +316,7 @@ def train_pipeline_jamba(args):
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, max_length=700)
 
-
+    
 
     train_dataloader = DataLoader(
         tokenized_imdb["train"],
@@ -312,12 +327,17 @@ def train_pipeline_jamba(args):
 
     pipeline_dataset = PipelineCompatibleDataset(train_dataloader)
     train_iter = deepspeed.utils.RepeatingLoader(pipeline_dataset)
+
+    train_set, vocab_size, pad_token_id = get_imdb_dataset(
+        seq_len=512, batch_size = 64,
+    ) 
     
     # Initialize DeepSpeed
     engine, _, _, _ = deepspeed.initialize(
         args=args,
         model=pipe_model,
-        model_parameters=[p for p in pipe_model.parameters() if p.requires_grad]
+        model_parameters=[p for p in pipe_model.parameters() if p.requires_grad],
+        training_data=train_set,
 
     )
     
@@ -329,21 +349,11 @@ def train_pipeline_jamba(args):
         
     # Training loop
     for step in range(args.steps):
-        loss = engine.train_batch(data_iter=train_iter)
+        loss = engine.train_batch()
         
         # Print progress
         if dist.get_rank() == 0 and step % 10 == 0:
             print(f"Step: {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
-class BlockPipe(nn.Module):
-    """Wrap a Block so it only propagates `hidden_states` onward."""
-    def __init__(self, block: nn.Module):
-        super().__init__()
-        self.block = block
-
-    def forward(self, x):
-        # block(x) returns (hidden_states, residual)
-        hidden_states = self.block(x[0],x[1])
-        return hidden_states
 
 def train_base(args):
     """Training without pipeline parallelism for comparison"""
@@ -444,7 +454,7 @@ def train_base(args):
 if __name__ == '__main__':
     args = get_args()
     
-    deepspeed.init_distributed()
+    deepspeed.init_distributed(dist_backend=args.backend)
     args.local_rank = int(os.environ.get('LOCAL_RANK', '0'))
     torch.cuda.set_device(args.local_rank)
     
