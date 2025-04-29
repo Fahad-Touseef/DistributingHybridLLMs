@@ -88,7 +88,7 @@ def train_base(args):
 
     criterion = torch.nn.CrossEntropyLoss()
 
-    total_steps = args.steps * engine.gradient_accumulation_steps()
+    total_steps = args.steps * gas
     step = 0
     for micro_step in range(total_steps):
         batch = next(data_iter)
@@ -100,7 +100,7 @@ def train_base(args):
         engine.backward(loss)
         engine.step()
 
-        if micro_step % engine.gradient_accumulation_steps() == 0:
+        if micro_step % gas == 0:
             step += 1
             if rank == 0 and (step % 10 == 0):
                 print(f'step: {step:3d} / {args.steps:3d} loss: {loss}')

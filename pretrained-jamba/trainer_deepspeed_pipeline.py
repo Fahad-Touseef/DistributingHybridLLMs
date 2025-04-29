@@ -1,34 +1,29 @@
+import torch.distributed
 from transformers import AutoModelForCausalLM, AutoTokenizer, JambaForSequenceClassification, JambaConfig
 from torch.utils.data import DataLoader
 from transformers import DataCollatorWithPadding
 from torch.utils.tensorboard import SummaryWriter
 from torch.profiler import profile, record_function, ProfilerActivity
+import torch.nn as nn
 from datasets import load_dataset
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import sys
-import time
-from datetime import datetime
 import deepspeed
-import argparse
-
-
-import os
 import argparse
 import torch
 import torch.distributed as dist
 import deepspeed
 from deepspeed.pipe import PipelineModule, LayerSpec
-from transformers import AutoTokenizer
-from transformers.models.jamba.configuration_jamba import JambaConfig
 from transformers.models.jamba.modeling_jamba import (
     JambaForSequenceClassification,
     JambaMambaDecoderLayer,
     JambaRMSNorm,
     JambaAttentionDecoderLayer
 )
-import torch.nn.functional as F
+import torchvision
+from torchvision import transforms
+import os
+from torch.utils.data import IterableDataset
+
 
 def get_args():
     parser = argparse.ArgumentParser(description='Jamba Pipeline Parallelism')
@@ -89,12 +84,22 @@ class DummyTextDataset(torch.utils.data.Dataset):
         # Generate random token ids
         input_ids = torch.randint(1, self.vocab_size, (self.seq_length,))
         label = torch.randint(0, self.num_classes, (1,)).item()
-        return {'input_ids': input_ids, 'labels': label}
+        return (input_ids, label)
 
 def collate_fn(batch):
     input_ids = torch.stack([item['input_ids'] for item in batch])
     labels = torch.tensor([item['labels'] for item in batch])
     return input_ids, labels
+
+class PipelineCompatibleDataset(IterableDataset):
+    def __init__(self, dataset):
+        self.dataset = dataset
+        
+    def __iter__(self):
+        for batch in self.dataset:
+            # Convert dict of tensors to a list of inputs for pipeline
+            # For most transformer models, we need [input_ids, attention_mask, labels]
+            yield [batch["input_ids"], batch["attention_mask"], batch["labels"]]
 
 class JambaPipelineWrapper(torch.nn.Module):
     """
@@ -118,6 +123,7 @@ class JambaPipelineWrapper(torch.nn.Module):
         
     def forward(self, inputs):
         if self.layer_type == "embed":
+            mask, input = inputs
             return self.layer(inputs)
         elif self.layer_type == "mamba_layer" or self.layer_type == "attention_layer":
             return self.layer(inputs)
@@ -151,6 +157,35 @@ def create_pipeline_specs(model):
     specs.append({"tied": None, "type": "head", "name": "score"})
     
     return specs
+# one possiblity for passing the data as input 
+class JambaPipelineModule(JambaForSequenceClassification):
+    def forward(self, inputs):
+        hidden, mask = inputs
+        output = super().forward(hidden, mask)
+        return output
+    
+
+def join_jamba_layers(jamba_model):
+    '''
+    layer partitioning for pipeline parallelism
+    '''
+    print("join init layer", jamba_model)
+    layers = []
+
+    # Embedding layer first
+    layers.append(jamba_model.model.embed_tokens)
+
+    # Then the transformer/mamba decoder layers
+    for layer in jamba_model.model.layers:
+        layers.append(layer)
+
+    # Final normalization
+    layers.append(jamba_model.model.final_layernorm)
+
+    # Final classification head (score projection)
+    layers.append(jamba_model.score)
+
+    return layers
 
 def create_pipeline_model(model, specs, args):
     """Create a PipelineModule from model and specs"""
@@ -165,21 +200,35 @@ def create_pipeline_model(model, specs, args):
         layers.append(layer)
     
     # Create PipelineModule
-    loss_fn = lambda x, y: F.cross_entropy(x, y)
     pipe_model = PipelineModule(
         layers=layers,
-        loss_fn=loss_fn,
+        loss_fn=torch.nn.CrossEntropyLoss(),
         num_stages=args.pipeline_parallel_size,
-        partition_method='uniform',
+        partition_method='parameters',
+        # partition_method='uniform',
         activation_checkpoint_interval=0
     )
     
     return pipe_model
 
+def dummy_trainset(local_rank, dl_path='/tmp/cifar10-data'):
+    # Ensure only one rank downloads.
+    # Note: if the download path is not on a shared filesytem, remove the semaphore
+    # and switch to args.local_rank
+    dist.barrier()
+    if local_rank != 0:
+        dist.barrier()
+    trainset = DummyTextDataset(
+        tokenizer=AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b"),
+        seq_length=512)
+    if local_rank == 0:
+        dist.barrier()
+    return trainset
+
 def train_pipeline_jamba(args):
     torch.manual_seed(args.seed)
     deepspeed.runtime.utils.set_random_seed(args.seed)
-    
+    print("World size", torch.distributed.get_world_size())
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     
@@ -207,29 +256,69 @@ def train_pipeline_jamba(args):
     # Create model configuration
     jambaconfig = JambaConfig(**jamba_config)
     
+    
+
+   
     # Create base model (not for training, just for extracting structure)
     model = JambaForSequenceClassification(jambaconfig)
-    
+   
+    jamabalayers = join_jamba_layers(model)
+    print("Jamba layers============", jamabalayers)
     # Create specs for pipeline parallelism
-    specs = create_pipeline_specs(model)
-
-    print("Pipeline specs:", specs)
+    # specs = create_pipeline_specs(model)
+    # print("Pipeline specs============", specs)
     
     # Create pipeline model
-    pipe_model = create_pipeline_model(model, specs, args)
+    #pipe_model = create_pipeline_model(model, specs, args)
+    pipe_model = PipelineModule(
+        layers=jamabalayers,
+        loss_fn=torch.nn.CrossEntropyLoss(),
+        num_stages=args.pipeline_parallel_size,
+        partition_method='parameters',
+        # partition_method='uniform',
+        activation_checkpoint_interval=0
+    )
+
+    print("Pipeline model============", pipe_model)
     
     # Create dataset
-    trainset = DummyTextDataset(
-        tokenizer=tokenizer,
-        seq_length=args.seq_length
+    # trainset = DummyTextDataset(
+    #     tokenizer=tokenizer,
+    #     seq_length=args.seq_length
+    # )
+
+    #trainset = cifar_trainset(args.local_rank)
+    # Create repeating loader
+    tokenizer = AutoTokenizer.from_pretrained("ai21labs/Jamba-v0.1")
+    imdb = load_dataset("imdb")
+
+    def preprocess_function(examples):
+        return tokenizer(examples["text"], truncation=True, max_length=700, padding="max_length")
+
+    tokenized_imdb = imdb.map(preprocess_function, batched=True)
+    tokenized_imdb = tokenized_imdb.remove_columns(["text"])
+    tokenized_imdb.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
+
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True, max_length=700)
+
+
+
+    train_dataloader = DataLoader(
+        tokenized_imdb["train"],
+        shuffle=True,
+        batch_size=16,
+        collate_fn=data_collator
     )
+
+    pipeline_dataset = PipelineCompatibleDataset(train_dataloader)
+    train_iter = deepspeed.utils.RepeatingLoader(pipeline_dataset)
     
     # Initialize DeepSpeed
     engine, _, _, _ = deepspeed.initialize(
         args=args,
         model=pipe_model,
-        model_parameters=[p for p in pipe_model.parameters() if p.requires_grad],
-        training_data=trainset
+        model_parameters=[p for p in pipe_model.parameters() if p.requires_grad]
+
     )
     
     # Print pipeline configuration
@@ -240,29 +329,21 @@ def train_pipeline_jamba(args):
         
     # Training loop
     for step in range(args.steps):
-        loss = engine.train_batch()
+        loss = engine.train_batch(data_iter=train_iter)
         
         # Print progress
         if dist.get_rank() == 0 and step % 10 == 0:
             print(f"Step: {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
+class BlockPipe(nn.Module):
+    """Wrap a Block so it only propagates `hidden_states` onward."""
+    def __init__(self, block: nn.Module):
+        super().__init__()
+        self.block = block
 
-class RepeatingLoader:
-    """Iterator wrapper that keeps reusing the iterator for multiple epochs."""
-    def __init__(self, loader):
-        self.loader = loader
-        self.iterator = None
-    
-    def __iter__(self):
-        return self
-    
-    def __next__(self):
-        if self.iterator is None:
-            self.iterator = iter(self.loader)
-        try:
-            return next(self.iterator)
-        except StopIteration:
-            self.iterator = iter(self.loader)
-            return next(self.iterator)
+    def forward(self, x):
+        # block(x) returns (hidden_states, residual)
+        hidden_states = self.block(x[0],x[1])
+        return hidden_states
 
 def train_base(args):
     """Training without pipeline parallelism for comparison"""
@@ -330,7 +411,7 @@ def train_base(args):
     train_dataloader = DataLoader(
         tokenized_imdb["train"],
         shuffle=True,
-        batch_size=args.batch,
+        batch_size=16,
         collate_fn=data_collator
     )
     data_iter = iter(train_dataloader)
@@ -363,7 +444,7 @@ def train_base(args):
 if __name__ == '__main__':
     args = get_args()
     
-    deepspeed.init_distributed(dist_backend=args.backend)
+    deepspeed.init_distributed()
     args.local_rank = int(os.environ.get('LOCAL_RANK', '0'))
     torch.cuda.set_device(args.local_rank)
     
