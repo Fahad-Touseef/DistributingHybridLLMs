@@ -20,8 +20,9 @@ from transformers.models.jamba.modeling_jamba import (
     JambaRMSNorm,
     JambaAttentionDecoderLayer
 )
-import torchvision
-from torchvision import transforms
+from datetime import datetime
+# import torchvision
+# from torchvision import transforms
 import os
 from torch.utils.data import IterableDataset
 from data import get_imdb_dataset
@@ -112,8 +113,10 @@ class BlockPipe(nn.Module):
 
     def forward(self, x):
         # block(x) returns (hidden_states, residual)
-        hidden_states = self.block(x)
-        return hidden_states
+        print("BlockPipe x:", type(x))
+        output = self.block(x)
+        print("BlockPipe output:", type(output))
+        return output[0] if isinstance(output, tuple) else output
 
 
 
@@ -124,20 +127,20 @@ def train_pipeline_jamba(args):
     
     # Create JambaConfig
     train_set, vocab_size, pad_token_id = get_imdb_dataset(
-        seq_len=512, batch_size = 32,
+        seq_len=512, batch_size = 16,
     ) 
     jamba_config = {
         "vocab_size": vocab_size,
         "hidden_size": 128,
-        "num_hidden_layers": 2,
+        "num_hidden_layers": 4,
         "num_attention_heads": 4,
-        "num_key_value_heads": 4,
+        "num_key_value_heads": 2,
         
         "num_experts_per_tok": 1,
         "num_experts": 2,
         "expert_layer_offset": 1,
         
-        "attn_layer_period": 1,
+        "attn_layer_period": 2,
         "attn_layer_offset": 1,
         
         "use_mamba_kernels": False, 
@@ -146,6 +149,25 @@ def train_pipeline_jamba(args):
         "mamba_expand": 2,
         "output_router_logits":False,
     }
+#     jamba_config = {
+#     "vocab_size": vocab_size,
+#     "hidden_size": 128,
+#     "num_hidden_layers": 4,
+#     "num_attention_heads": 4,
+#     "num_key_value_heads": 2,
+
+#     "num_experts_per_tok": 1,
+#     "num_experts": 2,
+#     "expert_layer_offset": 1,
+
+#     "attn_layer_period": 2,
+#     "attn_layer_offset": 1,
+
+#     "use_mamba_kernels": False,
+#     "mamba_d_state": 16,
+#     "mamba_d_conv": 4,
+#     "mamba_expand": 2,
+# }
     
     # Create model configuration
     jambaconfig = JambaConfig(**jamba_config)
@@ -166,6 +188,8 @@ def train_pipeline_jamba(args):
     layers = [
         model.backbone.embed_tokens,
         *temp,
+        model.backbone.final_layernorm,
+        lambda x: x[:, 0, :],
         model.classifier
        
     ]
@@ -191,11 +215,19 @@ def train_pipeline_jamba(args):
     engine, _, _, _ = deepspeed.initialize(
         args=args,
         model=pipe_model,
-        model_parameters=[p for p in pipe_model.parameters() if p.requires_grad],
+        model_parameters=pipe_model.parameters(),
         training_data=train_set,
     )
     
-    activities = [ ProfilerActivity.CPU, ProfilerActivity.CUDA]
+    # Print pipeline configuration
+    if dist.get_rank() == 0:
+        print(f"Pipeline parallel size: {args.pipeline_parallel_size}")
+        print(f"Micro batch size: {engine.train_micro_batch_size_per_gpu()}")
+        print(f"Number of pipeline stages: {pipe_model.num_stages}")
+        
+    activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA]
+    # Training loop
+    # start profiling after epoch 1
     prof = torch.profiler.profile(
         activities=activities,
         schedule=torch.profiler.schedule(wait=2, # #during the first 2 epochs profile is not active
@@ -207,13 +239,19 @@ def train_pipeline_jamba(args):
         profile_memory=True,
         with_stack=False,
     )
-    prof.start()  
+    prof.start()
+
     # Training loop
     for step in range(args.steps):
         prof.step()
         loss = engine.train_batch()
+        prof.step()
         print(f"Step {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
-    prof.stop()  
+        # Print progress
+        if dist.get_rank() == 0 and step % 10 == 0:
+            print(f"Step: {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
+
+    prof.stop()
 
 def train_base(args):
     """Training without pipeline parallelism for comparison"""
