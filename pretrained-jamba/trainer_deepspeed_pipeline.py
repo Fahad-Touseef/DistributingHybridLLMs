@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 from transformers import DataCollatorWithPadding
 from torch.utils.tensorboard import SummaryWriter
 from torch.profiler import profile, record_function, ProfilerActivity
+from datetime import datetime
 import torch.nn as nn
 from datasets import load_dataset
 import torch
@@ -120,9 +121,7 @@ class BlockPipe(nn.Module):
 
 
 def train_pipeline_jamba(args):
-    torch.manual_seed(args.seed)
-    deepspeed.runtime.utils.set_random_seed(args.seed)
-    print("World size", torch.distributed.get_world_size())
+    
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     
@@ -244,6 +243,7 @@ def train_pipeline_jamba(args):
 
     # Training loop
     for step in range(args.steps):
+        prof.step()
         loss = engine.train_batch()
         prof.step()
         print(f"Step {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
@@ -353,6 +353,8 @@ if __name__ == '__main__':
     args = get_args()
     
     deepspeed.init_distributed(dist_backend=args.backend)
+    torch.manual_seed(args.seed)
+    deepspeed.runtime.utils.set_random_seed(args.seed)
     args.local_rank = int(os.environ.get('LOCAL_RANK', '0'))
     torch.cuda.set_device(args.local_rank)
     

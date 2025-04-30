@@ -73,8 +73,8 @@ def get_imdb_dataset(
             tokenizer.pad_token = tokenizer.eos_token
         else:
             tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-
-    dataset = load_dataset("imdb", split="train", streaming=streaming)
+    subset = 100
+    dataset = load_dataset("imdb", split=f"train[:{subset}]", streaming=streaming)
     total = len(dataset)
     sel = (total // batch_size) * batch_size
     dataset = dataset.select(range(sel))
