@@ -1,7 +1,7 @@
 {
   "train_micro_batch_size_per_gpu" : 8,
    "optimizer": {
-    "type": "Adam",
+    "type": "AdamW",
     "params": {
       "lr": 0.001,
       "betas": [
@@ -17,9 +17,7 @@
   "zero_optimization": {
     "stage": 1
   },
-  "steps_per_print" : 10,
-  "wall_clock_breakdown" : false,
-  "world_size":2,
+  "steps_per_print" : 5,
   "gradient_accumulation_steps" : 1,
   "flops_profiler": {
     "enabled": true,
