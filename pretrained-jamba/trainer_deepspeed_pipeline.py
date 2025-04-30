@@ -85,6 +85,24 @@ class JambaPipelineModule(JambaForSequenceClassification):
 
 
 
+class ClassificationModel(nn.Module):
+    def __init__(self, backbone, d_model, num_classes=2):
+        super().__init__()
+        self.backbone = backbone
+        self.classifier = nn.Linear(d_model, num_classes)
+
+    def forward(self, inputs):
+        # Unpack input_ids from the tuple
+        if isinstance(inputs, tuple):
+            input_ids = inputs[0]
+        else:
+            input_ids = inputs
+
+        outputs = self.backbone(input_ids=input_ids)
+        pooled_output = outputs[:, 0, :]  # Use the [CLS] token representation
+        logits = self.classifier(pooled_output)
+        return logits
+
 class BlockPipe(nn.Module):
     """Wrap a Block so it only propagates `hidden_states` onward."""
     def __init__(self, block: nn.Module):
@@ -93,22 +111,9 @@ class BlockPipe(nn.Module):
 
     def forward(self, x):
         # block(x) returns (hidden_states, residual)
-        if isinstance(x, torch.Tensor) and not x.requires_grad and self.training:
-            x.requires_grad_(True)
-            
-        output = self.block(x)
-        
-        # Ensure output has proper gradient connection
-        if isinstance(output, tuple):
-            hidden_states = output[0]
-        else:
-            hidden_states = output
-            
+        hidden_states = self.block(x)
         return hidden_states
-    
-class SelectCLS(nn.Module):
-    def forward(self, x):
-        return x[:, 0, :]
+
 
 
 def train_pipeline_jamba(args):
@@ -119,8 +124,11 @@ def train_pipeline_jamba(args):
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     
     # Create JambaConfig
+    train_set, vocab_size, pad_token_id = get_imdb_dataset(
+        seq_len=512, batch_size = 32,
+    ) 
     jamba_config = {
-        "vocab_size": len(tokenizer.vocab),
+        "vocab_size": vocab_size,
         "hidden_size": 128,
         "num_hidden_layers": 2,
         "num_attention_heads": 4,
@@ -145,29 +153,28 @@ def train_pipeline_jamba(args):
 
     # Create base model (not for training, just for extracting structure)
     model = JambaForSequenceClassification(jambaconfig)
+
+    model = ClassificationModel(model.model, model.model.embed_tokens.embedding_dim, num_classes=2)
    
     #jamabalayers = join_jamba_layers(model)
     #print("Jamba layers============", jamabalayers)
     # Create specs for pipeline parallelism
     # specs = create_pipeline_specs(model)
     # print("Pipeline specs============", specs)
-    temp = [BlockPipe(b) for b in model.model.layers]
+   
+    temp = [ BlockPipe(b) for b in model.backbone.layers]
+  
     layers = [
-        model.model.embed_tokens,
+        model.backbone.embed_tokens,
         *temp,
-        model.model.final_layernorm,
-        model.score,
-        SelectCLS()
+        lambda x: x[:, 0, :],
+        model.classifier
+       
     ]
     # Create pipeline model
     #pipe_model = create_pipeline_model(model, specs, args)
     def loss_fn(outputs, labels):
-       # Debug prints
-        print(f"outputs {outputs.shape}")
-        print(f"outputs.requires_grad: {outputs.requires_grad}")
-        print(f"outputs has grad_fn: {outputs.grad_fn is not None}")
-        print(f"labels.requires_grad: {labels.requires_grad}")
-        outputs = outputs.requires_grad_(True)
+        #outputs = outputs.requires_grad_(True)
         loss = nn.CrossEntropyLoss()(outputs, labels)
         return loss
     
@@ -179,16 +186,8 @@ def train_pipeline_jamba(args):
         # partition_method='uniform',
         activation_checkpoint_interval=0
     )
-
-    print("Pipeline model============", pipe_model)
     
-
-    train_set, vocab_size, pad_token_id = get_imdb_dataset(
-        seq_len=512, batch_size = 32,
-    ) 
-
-    for param in pipe_model.parameters():
-        param.requires_grad = True
+    print("Pipeline model============", pipe_model)
     
     # Initialize DeepSpeed
     engine, _, _, _ = deepspeed.initialize(
@@ -207,7 +206,7 @@ def train_pipeline_jamba(args):
     # Training loop
     for step in range(args.steps):
         loss = engine.train_batch()
-        
+        print(f"Step {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
         # Print progress
         if dist.get_rank() == 0 and step % 10 == 0:
             print(f"Step: {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
