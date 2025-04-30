@@ -100,7 +100,7 @@ def main():
         attn_cfg=config.model.attn_cfg,
         rms_norm=True,
         fused_add_norm=False,        # <-- turn OFF the fused kernel
-        residual_in_fp32=False,        # optional, but keep norm + residual in same dtype
+        residual_in_fp32=True,        # optional, but keep norm + residual in same dtype
         )
        
     # Build the hybrid model
@@ -119,7 +119,7 @@ def main():
         model.backbone.embedding,
         # lambda x: x[0] if isinstance(x, tuple) else x,  # Ensure inputs are unpacked before the first block
         *temp,
-        # model.backbone.norm_f,
+        model.backbone.norm_f,
         lambda x: x[:, 0, :],  # Extract the [CLS] token representation
         model.classifier
     ]

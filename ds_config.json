@@ -12,7 +12,7 @@
     }
   },
   "fp16": {
-    "enabled": true        
+  "enabled": false
   },
   "zero_optimization": {
     "stage": 1
