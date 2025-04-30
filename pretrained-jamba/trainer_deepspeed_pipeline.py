@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 from transformers import DataCollatorWithPadding
 from torch.utils.tensorboard import SummaryWriter
 from torch.profiler import profile, record_function, ProfilerActivity
+from datetime import datetime
 import torch.nn as nn
 from datasets import load_dataset
 import torch
@@ -117,9 +118,7 @@ class BlockPipe(nn.Module):
 
 
 def train_pipeline_jamba(args):
-    torch.manual_seed(args.seed)
-    deepspeed.runtime.utils.set_random_seed(args.seed)
-    print("World size", torch.distributed.get_world_size())
+    
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     
@@ -167,7 +166,6 @@ def train_pipeline_jamba(args):
     layers = [
         model.backbone.embed_tokens,
         *temp,
-        lambda x: x[:, 0, :],
         model.classifier
        
     ]
@@ -197,19 +195,25 @@ def train_pipeline_jamba(args):
         training_data=train_set,
     )
     
-    # Print pipeline configuration
-    if dist.get_rank() == 0:
-        print(f"Pipeline parallel size: {args.pipeline_parallel_size}")
-        print(f"Micro batch size: {engine.train_micro_batch_size_per_gpu()}")
-        print(f"Number of pipeline stages: {pipe_model.num_stages}")
-        
+    activities = [ ProfilerActivity.CPU, ProfilerActivity.CUDA]
+    prof = torch.profiler.profile(
+        activities=activities,
+        schedule=torch.profiler.schedule(wait=2, # #during the first 2 epochs profile is not active
+                                            warmup=2, # during this phase profiler starts tracing, but the results are discarded
+                                            active = 5, # actively record the next 6 steps 
+                                            repeat = 1), # specififes an uppper boun on the  number of cycles
+        on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./logs/jamba/profiler_{datetime.now().strftime("%Y%m%d-%H%M%S")}', worker_name="worker"),
+        record_shapes=False,
+        profile_memory=True,
+        with_stack=False,
+    )
+    prof.start()  
     # Training loop
     for step in range(args.steps):
+        prof.step()
         loss = engine.train_batch()
         print(f"Step {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
-        # Print progress
-        if dist.get_rank() == 0 and step % 10 == 0:
-            print(f"Step: {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
+    prof.stop()  
 
 def train_base(args):
     """Training without pipeline parallelism for comparison"""
@@ -311,6 +315,8 @@ if __name__ == '__main__':
     args = get_args()
     
     deepspeed.init_distributed(dist_backend=args.backend)
+    torch.manual_seed(args.seed)
+    deepspeed.runtime.utils.set_random_seed(args.seed)
     args.local_rank = int(os.environ.get('LOCAL_RANK', '0'))
     torch.cuda.set_device(args.local_rank)
     

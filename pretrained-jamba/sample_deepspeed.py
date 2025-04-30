@@ -53,7 +53,7 @@ def get_args():
     parser.add_argument('-p',
                         '--pipeline-parallel-size',
                         type=int,
-                        default=2,
+                        default=4,
                         help='pipeline parallelism')
     parser.add_argument('--backend',
                         type=str,
@@ -146,6 +146,7 @@ def train_pipe(args, part='parameters'):
 
     for step in range(args.steps):
         loss = engine.train_batch()
+        print(f'step: {step:3d} / {args.steps:3d} loss: {loss}')
 
 
 if __name__ == '__main__':
