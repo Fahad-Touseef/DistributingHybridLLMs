@@ -56,7 +56,7 @@ def main(args):
         "expert_layer_offset": 1,
 
         # Attention layer config
-        "attn_layer_period": 1,
+        "attn_layer_period": 2,
         "attn_layer_offset": 1,
 
         # Mamba-specific config

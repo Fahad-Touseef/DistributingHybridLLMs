@@ -13,7 +13,7 @@
     }
   },
   "pipeline": {
-    "stages":4
+    "stages":2
   },
   "zero_optimization": {
     "stage": 1

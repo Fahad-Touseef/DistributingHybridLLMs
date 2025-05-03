@@ -1,4 +1,4 @@
-DeepSpeedEngine(
+DistributedDataParallel(
   (module): JambaForSequenceClassification(
     (model): JambaModel(
       (embed_tokens): Embedding(65536, 128, padding_idx=0)
@@ -24,17 +24,12 @@ DeepSpeedEngine(
           (input_layernorm): JambaRMSNorm((128,), eps=1e-06)
           (pre_ff_layernorm): JambaRMSNorm((128,), eps=1e-06)
         )
-        (1): JambaMambaDecoderLayer(
-          (mamba): JambaMambaMixer(
-            (conv1d): Conv1d(256, 256, kernel_size=(4,), stride=(1,), padding=(3,), groups=256)
-            (act): SiLU()
-            (in_proj): Linear(in_features=128, out_features=512, bias=False)
-            (x_proj): Linear(in_features=256, out_features=40, bias=False)
-            (dt_proj): Linear(in_features=8, out_features=256, bias=True)
-            (out_proj): Linear(in_features=256, out_features=128, bias=False)
-            (dt_layernorm): JambaRMSNorm((8,), eps=1e-06)
-            (b_layernorm): JambaRMSNorm((16,), eps=1e-06)
-            (c_layernorm): JambaRMSNorm((16,), eps=1e-06)
+        (1): JambaAttentionDecoderLayer(
+          (self_attn): JambaSdpaAttention(
+            (q_proj): Linear(in_features=128, out_features=128, bias=False)
+            (k_proj): Linear(in_features=128, out_features=128, bias=False)
+            (v_proj): Linear(in_features=128, out_features=128, bias=False)
+            (o_proj): Linear(in_features=128, out_features=128, bias=False)
           )
           (feed_forward): JambaSparseMoeBlock(
             (router): Linear(in_features=128, out_features=2, bias=False)

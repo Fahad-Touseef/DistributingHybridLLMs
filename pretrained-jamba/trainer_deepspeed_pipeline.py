@@ -43,7 +43,7 @@ def get_args():
     parser.add_argument('-p',
                         '--pipeline-parallel-size',
                         type=int,
-                        default=4,
+                        default=2,
                         help='pipeline parallelism')
     parser.add_argument('--backend',
                         type=str,
