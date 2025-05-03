@@ -127,12 +127,12 @@ def train_pipeline_jamba(args):
     
     # Create JambaConfig
     train_set, vocab_size, pad_token_id = get_imdb_dataset(
-        seq_len=512, batch_size = 16,
+        seq_len=512, batch_size = 32,
     ) 
     jamba_config = {
         "vocab_size": vocab_size,
         "hidden_size": 128,
-        "num_hidden_layers": 4,
+        "num_hidden_layers": 7,
         "num_attention_heads": 4,
         "num_key_value_heads": 2,
         
@@ -140,7 +140,7 @@ def train_pipeline_jamba(args):
         "num_experts": 2,
         "expert_layer_offset": 1,
         
-        "attn_layer_period": 2,
+        "attn_layer_period": 6,
         "attn_layer_offset": 1,
         
         "use_mamba_kernels": False, 
@@ -230,9 +230,9 @@ def train_pipeline_jamba(args):
     # start profiling after epoch 1
     prof = torch.profiler.profile(
         activities=activities,
-        schedule=torch.profiler.schedule(wait=2, # #during the first 2 epochs profile is not active
-                                            warmup=2, # during this phase profiler starts tracing, but the results are discarded
-                                            active = 5, # actively record the next 6 steps 
+        schedule=torch.profiler.schedule(wait=4, # #during the first 2 epochs profile is not active
+                                            warmup=4, # during this phase profiler starts tracing, but the results are discarded
+                                            active = 30, # actively record the next 6 steps 
                                             repeat = 1), # specififes an uppper boun on the  number of cycles
         on_trace_ready=torch.profiler.tensorboard_trace_handler(f'./logs/jamba/profiler_{datetime.now().strftime("%Y%m%d-%H%M%S")}', worker_name="worker"),
         record_shapes=False,
@@ -240,12 +240,13 @@ def train_pipeline_jamba(args):
         with_stack=False,
     )
     prof.start()
+    writer = SummaryWriter(log_dir='./logs/jamba-pipeline')
 
     # Training loop
     for step in range(args.steps):
-        prof.step()
         loss = engine.train_batch()
         prof.step()
+        writer.add_scalar('Loss/train', loss.item(), step)
         print(f"Step {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
         # Print progress
         if dist.get_rank() == 0 and step % 10 == 0:
