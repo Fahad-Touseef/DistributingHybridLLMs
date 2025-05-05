@@ -220,6 +220,11 @@ class CustomProfiler:
             with open(os.path.join(self.log_dir, 'layer_distribution.json'), 'w') as f:
                 json.dump(self.layer_distribution, f)
 
+def get_ranks_in_stage(stage, world_size, num_stages):
+    ranks_per_stage = world_size // num_stages
+    start_rank = stage * ranks_per_stage
+    return list(range(start_rank, start_rank + ranks_per_stage))
+
 
 def get_args():
     parser = argparse.ArgumentParser(description='Jamba Pipeline Parallelism')
@@ -514,7 +519,7 @@ def train_pipeline_jamba(args):
     if rank == 0:
         stage_info = {}
         for stage in range(pipe_model.num_stages):
-            stage_ranks = pipe_model._topo.get_ranks_in_stage(stage)
+            stage_ranks = get_ranks_in_stage(stage, world_size, pipe_model.num_stages)
             stage_info[f"stage_{stage}"] = {
                 "ranks": stage_ranks,
                 "num_ranks": len(stage_ranks)
