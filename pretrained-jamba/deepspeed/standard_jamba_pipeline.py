@@ -23,14 +23,9 @@ import os
 import time
 import json
 import wandb
-import psutil
-import numpy as np
 from torch.autograd import Function
-from typing import Dict, List, Tuple, Optional
 import pynvml
-import gc
 from contextlib import contextmanager
-from torch.utils.data import IterableDataset
 from data import get_imdb_dataset
 
 # Initialize NVML for GPU monitoring

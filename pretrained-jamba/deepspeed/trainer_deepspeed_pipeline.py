@@ -251,6 +251,8 @@ def train_pipeline_jamba(args):
             print(f"Step: {step}, Loss: {loss.item() if isinstance(loss, torch.Tensor) else loss}")
 
     prof.stop()
+    writer.close()
+    print("Training completed.")
 
 def train_base(args):
     """Training without pipeline parallelism for comparison"""
